@@ -4,7 +4,7 @@
 # Put parameters here that don't need to change on each machine where the app is deployed
 # https://symfony.com/doc/current/best_practices/configuration.html#application-related-configuration
 parameters:
-    package_name_pattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+?'
+    package_name_pattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_./~-]+?'
     organization_pattern: '[a-z0-9_-]+' # remember to change in security.yaml (access_control)
     uuid_pattern: '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}'
     dists_dir: '%env(resolve:PROXY_DIST_DIR)%'
@@ -15,6 +15,7 @@ parameters:
     router.request_context.host: '%env(default:domain:APP_PUBLIC_HOST)%'
     security_advisories_db_dir: '%env(resolve:SECURITY_ADVISORIES_DB_DIR)%'
     security_advisories_db_repo: 'https://github.com/FriendsOfPHP/security-advisories.git'
+    instance_id_file: '%kernel.project_dir%/var/instance-id'
 
 services:
     # default configuration for services in *this* file
@@ -25,6 +26,8 @@ services:
             $distsDir: '%dists_dir%'
             $resetPasswordTokenTtl: 86400 # 24h
             Symfony\Component\HttpFoundation\Session\Session $session: '@session'
+            $proxyFilesystem: '@proxy.storage'
+            $instanceIdFile: '%instance_id_file%'
 
     # makes classes in src/ available to be used as services
     # this creates a service per class whose id is the fully-qualified class name
@@ -48,6 +51,13 @@ services:
 
     Buddy\Repman\Service\Dist\Storage:
         class: Buddy\Repman\Service\Dist\Storage\FileStorage
+
+    proxy.storage.public:
+        public: true
+        alias: 'proxy.storage'
+
+    Buddy\Repman\Service\Proxy\ProxyRegister:
+        public: true
 
     repman.organization.dist_storage:
         class: Buddy\Repman\Service\Dist\Storage\FileStorage
@@ -84,6 +94,10 @@ services:
         arguments:
             $databaseDir: '%security_advisories_db_dir%'
             $databaseRepo: '%security_advisories_db_repo%'
+
+    Buddy\Repman\Service\Telemetry:
+        arguments:
+            $failedTransport: '@messenger.transport.failed'
 
     ### Vendor
     Github\Client:

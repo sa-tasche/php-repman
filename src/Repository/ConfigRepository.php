@@ -13,6 +13,7 @@ use Doctrine\Common\Persistence\ManagerRegistry;
  * @method Config|null findOneBy(array $criteria, array $orderBy = null)
  * @method Config[]    findAll()
  * @method Config[]    findBy(array $criteria, array $orderBy = null, $limit = null, $offset = null)
+ * @extends ServiceEntityRepository<Config>
  */
 class ConfigRepository extends ServiceEntityRepository
 {
@@ -22,7 +23,7 @@ class ConfigRepository extends ServiceEntityRepository
     }
 
     /**
-     * @param array<string,string> $values
+     * @param array<string,mixed> $values
      */
     public function change(array $values): void
     {
@@ -30,7 +31,7 @@ class ConfigRepository extends ServiceEntityRepository
             $config = $this->findOneBy(['key' => $key]);
 
             if ($config instanceof Config) {
-                $config->setValue($value);
+                $config->setValue((string) $value);
             }
         }
     }

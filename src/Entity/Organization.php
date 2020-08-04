@@ -65,6 +65,11 @@ class Organization
      */
     private ?Collection $members = null;
 
+    /**
+     * @ORM\Column(type="boolean", options={"default": false})
+     */
+    private bool $hasAnonymousAccess = false;
+
     public function __construct(UuidInterface $id, User $owner, string $name, string $alias)
     {
         $this->id = $id;
@@ -236,6 +241,19 @@ class Organization
         }
 
         return null;
+    }
+
+    /**
+     * @return Collection<int,Member>|Member[]
+     */
+    public function members(): Collection
+    {
+        return $this->members;
+    }
+
+    public function changeAnonymousAccess(bool $hasAnonymousAccess): void
+    {
+        $this->hasAnonymousAccess = $hasAnonymousAccess;
     }
 
     private function isLastOwner(User $user): bool

@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Controller;
 
-use Buddy\Repman\Entity\User;
 use Buddy\Repman\Form\Type\Organization\ChangeAliasType;
+use Buddy\Repman\Form\Type\Organization\ChangeAnonymousAccessType;
 use Buddy\Repman\Form\Type\Organization\ChangeNameType;
-use Buddy\Repman\Form\Type\Organization\CreateType;
 use Buddy\Repman\Form\Type\Organization\GenerateTokenType;
 use Buddy\Repman\Message\Organization\ChangeAlias;
+use Buddy\Repman\Message\Organization\ChangeAnonymousAccess;
 use Buddy\Repman\Message\Organization\ChangeName;
-use Buddy\Repman\Message\Organization\CreateOrganization;
 use Buddy\Repman\Message\Organization\GenerateToken;
 use Buddy\Repman\Message\Organization\Package\AddBitbucketHook;
 use Buddy\Repman\Message\Organization\Package\AddGitHubHook;
@@ -30,8 +29,8 @@ use Buddy\Repman\Query\User\Model\Organization;
 use Buddy\Repman\Query\User\Model\Package;
 use Buddy\Repman\Query\User\OrganizationQuery;
 use Buddy\Repman\Query\User\PackageQuery;
+use Buddy\Repman\Security\Model\User;
 use Buddy\Repman\Service\ExceptionHandler;
-use Buddy\Repman\Service\Organization\AliasGenerator;
 use Ramsey\Uuid\Uuid;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -55,34 +54,6 @@ final class OrganizationController extends AbstractController
     }
 
     /**
-     * @Route("/organization/new", name="organization_create", methods={"GET","POST"})
-     */
-    public function create(Request $request, AliasGenerator $aliasGenerator): Response
-    {
-        $form = $this->createForm(CreateType::class);
-        $form->handleRequest($request);
-
-        if ($form->isSubmitted() && $form->isValid()) {
-            $user = $this->getUser();
-
-            $this->dispatchMessage(new CreateOrganization(
-                $id = Uuid::uuid4()->toString(),
-                $user->id()->toString(),
-                $name = $form->get('name')->getData()
-            ));
-            $this->dispatchMessage(new GenerateToken($id, 'default'));
-
-            $this->addFlash('success', sprintf('Organization "%s" has been created', $name));
-
-            return $this->redirectToRoute('organization_overview', ['organization' => $aliasGenerator->generate($name)]);
-        }
-
-        return $this->render('organization/create.html.twig', [
-            'form' => $form->createView(),
-        ]);
-    }
-
-    /**
      * @Route("/organization/{organization}/overview", name="organization_overview", methods={"GET"}, requirements={"organization"="%organization_pattern%"})
      */
     public function overview(Organization $organization): Response
@@ -99,7 +70,8 @@ final class OrganizationController extends AbstractController
     public function packages(Organization $organization, Request $request): Response
     {
         $count = $this->packageQuery->count($organization->id());
-        if ($count === 0 && $organization->isOwner($this->getUser()->id()->toString())) {
+        $user = parent::getUser();
+        if ($count === 0 && $user instanceof User && $organization->isOwner($user->id())) {
             return $this->redirectToRoute('organization_package_new', ['organization' => $organization->alias()]);
         }
 
@@ -138,6 +110,19 @@ final class OrganizationController extends AbstractController
         $this->addFlash('success', 'Package has been successfully removed');
 
         return $this->redirectToRoute('organization_packages', ['organization' => $organization->alias()]);
+    }
+
+    /**
+     * @Route("/organization/{organization}/package/{package}/details", name="organization_package_details", methods={"GET"}, requirements={"organization"="%organization_pattern%","package"="%uuid_pattern%"})
+     */
+    public function packageDetails(Organization $organization, Package $package, Request $request): Response
+    {
+        return $this->render('organization/package/details.html.twig', [
+            'organization' => $organization,
+            'package' => $package,
+            'count' => $this->packageQuery->versionCount($package->id()),
+            'versions' => $this->packageQuery->getVersions($package->id(), 20, (int) $request->get('offset', 0)),
+        ]);
     }
 
     /**
@@ -289,10 +274,20 @@ final class OrganizationController extends AbstractController
             return $this->redirectToRoute('organization_settings', ['organization' => $aliasForm->get('alias')->getData()]);
         }
 
+        $anonymousAccessForm = $this->createForm(ChangeAnonymousAccessType::class, ['hasAnonymousAccess' => $organization->hasAnonymousAccess()]);
+        $anonymousAccessForm->handleRequest($request);
+        if ($anonymousAccessForm->isSubmitted() && $anonymousAccessForm->isValid()) {
+            $this->dispatchMessage(new ChangeAnonymousAccess($organization->id(), $anonymousAccessForm->get('hasAnonymousAccess')->getData()));
+            $this->addFlash('success', 'Anonymous access has been successfully changed.');
+
+            return $this->redirectToRoute('organization_settings', ['organization' => $organization->alias()]);
+        }
+
         return $this->render('organization/settings.html.twig', [
             'organization' => $organization,
             'renameForm' => $renameForm->createView(),
             'aliasForm' => $aliasForm->createView(),
+            'anonymousAccessForm' => $anonymousAccessForm->createView(),
         ]);
     }
 
@@ -345,14 +340,6 @@ final class OrganizationController extends AbstractController
             'results' => $this->packageQuery->getScanResults($package->id(), 20, (int) $request->get('offset', 0)),
             'count' => $this->packageQuery->getScanResultsCount($package->id()),
         ]);
-    }
-
-    protected function getUser(): User
-    {
-        /** @var User $user */
-        $user = parent::getUser();
-
-        return $user;
     }
 
     private function tryToRemoveWebhook(Package $package): void

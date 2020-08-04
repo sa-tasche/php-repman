@@ -11,6 +11,12 @@ final class Config
 {
     const CACHE_KEY = 'values';
 
+    const TELEMETRY = 'telemetry';
+    const TELEMETRY_ENABLED = 'enabled';
+    const TELEMETRY_DISABLED = 'disabled';
+
+    const TECHNICAL_EMAIL = 'technical_email';
+
     private ConfigQuery $configQuery;
     private CacheInterface $cache;
 
@@ -32,9 +38,34 @@ final class Config
         return $this->getAll()[$key] ?? null;
     }
 
+    public function localLoginEnabled(): bool
+    {
+        return $this->get('local_authentication') !== 'disabled';
+    }
+
+    public function localRegistrationEnabled(): bool
+    {
+        return $this->get('local_authentication') === 'login_and_registration';
+    }
+
+    public function oauthRegistrationEnabled(): bool
+    {
+        return $this->get('oauth_registration') === 'enabled';
+    }
+
     public function userRegistrationEnabled(): bool
     {
-        return $this->get('user_registration') === 'enabled';
+        return $this->localRegistrationEnabled() || $this->oauthRegistrationEnabled();
+    }
+
+    public function telemetryEnabled(): bool
+    {
+        return $this->get(self::TELEMETRY) === self::TELEMETRY_ENABLED;
+    }
+
+    public function isTechnicalEmailSet(): bool
+    {
+        return trim((string) $this->get(self::TECHNICAL_EMAIL)) !== '';
     }
 
     /**

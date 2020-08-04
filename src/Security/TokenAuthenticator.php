@@ -15,6 +15,11 @@ use Symfony\Component\Security\Guard\AbstractGuardAuthenticator;
 
 final class TokenAuthenticator extends AbstractGuardAuthenticator
 {
+    /**
+     * @codeCoverageIgnore
+     *
+     * @return Response
+     */
     public function start(Request $request, AuthenticationException $authException = null)
     {
         $data = [

@@ -4,20 +4,20 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Service\Organization;
 
-use Buddy\Repman\Entity\User;
 use Buddy\Repman\Query\User\Model\Organization;
 use Buddy\Repman\Query\User\OrganizationQuery;
+use Buddy\Repman\Security\Model\User;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 use Symfony\Component\Security\Core\Authorization\Voter\Voter;
 
 final class OrganizationVoter extends Voter
 {
-    private OrganizationQuery $organizationQuery;
+    private OrganizationQuery $organizations;
 
-    public function __construct(OrganizationQuery $organizationQuery)
+    public function __construct(OrganizationQuery $organizations)
     {
-        $this->organizationQuery = $organizationQuery;
+        $this->organizations = $organizations;
     }
 
     protected function supports(string $attribute, $subject): bool
@@ -25,7 +25,21 @@ final class OrganizationVoter extends Voter
         return in_array($attribute, [
             'ROLE_ORGANIZATION_MEMBER',
             'ROLE_ORGANIZATION_OWNER',
+            'ROLE_ORGANIZATION_ANONYMOUS_USER',
         ], true);
+    }
+
+    /**
+     * @param mixed   $subject
+     * @param mixed[] $attributes
+     */
+    public function vote(TokenInterface $token, $subject, array $attributes): int
+    {
+        if (!$token->getUser() instanceof User) {
+            return self::ACCESS_ABSTAIN;
+        }
+
+        return parent::vote($token, $subject, $attributes);
     }
 
     /**
@@ -33,29 +47,32 @@ final class OrganizationVoter extends Voter
      */
     protected function voteOnAttribute(string $attribute, $subject, TokenInterface $token): bool
     {
+        /**
+         * @var User
+         */
         $user = $token->getUser();
-        if (!$user instanceof User) {
-            return false;
-        }
-        $userId = $user->id()->toString();
 
         if ($subject instanceof Organization) {
-            return $attribute === 'ROLE_ORGANIZATION_OWNER' ? $subject->isOwner($userId) : $subject->isMember($userId);
+            return $attribute === 'ROLE_ORGANIZATION_OWNER' ? $subject->isOwner($user->id()) : $subject->isMember($user->id());
         }
 
         if ($subject instanceof Request) {
-            return $this->organizationQuery
-                ->getByAlias($subject->get('organization'))
-                ->map(function (Organization $organization) use ($userId, $subject, $attribute): bool {
-                    $subject->attributes->set('organization', $organization);
+            $checkOrganization = $this->organizations->getByAlias($subject->get('organization'))->getOrNull();
+            if ($checkOrganization instanceof Organization && $checkOrganization->hasAnonymousAccess()) {
+                return true;
+            }
 
-                    if ($attribute === 'ROLE_ORGANIZATION_OWNER') {
-                        return $organization->isOwner($userId);
-                    }
+            foreach ($user->organizations() as $organization) {
+                if ($organization->alias() !== $subject->get('organization')) {
+                    continue;
+                }
 
-                    return $organization->isMember($userId);
-                })
-                ->getOrElse(false);
+                if ($attribute === 'ROLE_ORGANIZATION_OWNER') {
+                    return $organization->role() === 'owner';
+                }
+
+                return true;
+            }
         }
 
         return false;

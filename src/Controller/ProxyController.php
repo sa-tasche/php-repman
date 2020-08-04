@@ -7,12 +7,15 @@ namespace Buddy\Repman\Controller;
 use Buddy\Repman\Message\Proxy\AddDownloads;
 use Buddy\Repman\Message\Proxy\AddDownloads\Package;
 use Buddy\Repman\Service\Proxy;
+use Buddy\Repman\Service\Proxy\Metadata;
 use Buddy\Repman\Service\Proxy\ProxyRegister;
+use Buddy\Repman\Service\Symfony\ResponseCallback;
 use Munus\Control\Option;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Routing\RouterInterface;
@@ -31,7 +34,7 @@ final class ProxyController extends AbstractController
      */
     public function packages(): JsonResponse
     {
-        return new JsonResponse([
+        return (new JsonResponse([
             'notify-batch' => $this->generateUrl('package_downloads', [], RouterInterface::ABSOLUTE_URL),
             'providers-url' => '/p/%package%$%hash%.json',
             'metadata-url' => '/p2/%package%.json',
@@ -43,20 +46,66 @@ final class ProxyController extends AbstractController
                 ],
             ],
             'providers-lazy-url' => '/p/%package%',
-        ]);
+        ]))
+            ->setPublic()
+            ->setTtl(86400)
+        ;
     }
 
     /**
-     * @Route("/p/{package}", name="package_provider", requirements={"package"="%package_name_pattern%"}, methods={"GET"})
+     * @Route("/p/{package}",
+     *     name="package_legacy_metadata",
+     *     host="repo.{domain}",
+     *     defaults={"domain"="%domain%"},
+     *     requirements={"package"="%package_name_pattern%","domain"="%domain%"},
+     *     methods={"GET"})
      */
-    public function provider(string $package): JsonResponse
+    public function legacyMetadata(string $package): Response
     {
-        return new JsonResponse($this->register->all()
-            ->map(fn (Proxy $proxy) => $proxy->providerData($package))
+        /** @var Metadata $metadata */
+        $metadata = $this->register->all()
+            ->map(fn (Proxy $proxy) => $proxy->legacyMetadata($package))
             ->find(fn (Option $option) => !$option->isEmpty())
             ->map(fn (Option $option) => $option->get())
-            ->getOrElse(['packages' => new \stdClass()])
-        );
+            ->getOrElse(Metadata::fromString('{"packages": {}}'));
+
+        return (new StreamedResponse(ResponseCallback::fromStream($metadata->stream()), 200, [
+            'Accept-Ranges' => 'bytes',
+            'Content-Type' => 'application/json',
+            /* @phpstan-ignore-next-line */
+            'Content-Length' => fstat($metadata->stream())['size'],
+        ]))
+            ->setPublic()
+            ->setLastModified((new \DateTime())->setTimestamp($metadata->timestamp()))
+        ;
+    }
+
+    /**
+     * @Route("/p2/{package}.json",
+     *     name="package_metadata",
+     *     host="repo.{domain}",
+     *     defaults={"domain"="%domain%"},
+     *     requirements={"package"="%package_name_pattern%","domain"="%domain%"},
+     *     methods={"GET"})
+     */
+    public function metadata(string $package): Response
+    {
+        /** @var Metadata $metadata */
+        $metadata = $this->register->all()
+            ->map(fn (Proxy $proxy) => $proxy->metadata($package))
+            ->find(fn (Option $option) => !$option->isEmpty())
+            ->map(fn (Option $option) => $option->get())
+            ->getOrElseThrow(new NotFoundHttpException());
+
+        return (new StreamedResponse(ResponseCallback::fromStream($metadata->stream()), 200, [
+            'Accept-Ranges' => 'bytes',
+            'Content-Type' => 'application/json',
+            /* @phpstan-ignore-next-line */
+            'Content-Length' => fstat($metadata->stream())['size'],
+        ]))
+            ->setPublic()
+            ->setLastModified((new \DateTime())->setTimestamp($metadata->timestamp()))
+        ;
     }
 
     /**
@@ -67,14 +116,24 @@ final class ProxyController extends AbstractController
      *     requirements={"package"="%package_name_pattern%","ref"="[a-f0-9]*?","type"="zip|tar","domain"="%domain%"},
      *     methods={"GET"})
      */
-    public function distribution(string $package, string $version, string $ref, string $type): BinaryFileResponse
+    public function distribution(string $package, string $version, string $ref, string $type): Response
     {
-        return new BinaryFileResponse($this->register->all()
-            ->map(fn (Proxy $proxy) => $proxy->distFilename($package, $version, $ref, $type))
+        /** @var resource $stream */
+        $stream = $this->register->all()
+            ->map(fn (Proxy $proxy) => $proxy->distribution($package, $version, $ref, $type))
             ->find(fn (Option $option) => !$option->isEmpty())
             ->map(fn (Option $option) => $option->get())
-            ->getOrElseThrow(new NotFoundHttpException('This distribution file can not be found or downloaded from origin url.'))
-        );
+            ->getOrElseThrow(new NotFoundHttpException('This distribution file can not be found or downloaded from origin url.'));
+
+        return (new StreamedResponse(ResponseCallback::fromStream($stream), 200, [
+            'Accept-Ranges' => 'bytes',
+            'Content-Type' => 'application/zip',
+            /* @phpstan-ignore-next-line */
+            'Content-Length' => fstat($stream)['size'],
+        ]))
+            ->setPublic()
+            ->setEtag($ref)
+        ;
     }
 
     /**

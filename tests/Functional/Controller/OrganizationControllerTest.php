@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Buddy\Repman\Tests\Functional\Controller;
 
 use Buddy\Repman\Entity\Organization\Package\Metadata;
+use Buddy\Repman\Entity\Organization\Package\Version;
 use Buddy\Repman\Entity\User\OAuthToken;
 use Buddy\Repman\Message\Security\ScanPackage;
 use Buddy\Repman\Service\GitHubApi;
@@ -317,6 +318,32 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertEquals(404, $this->client->getResponse()->getStatusCode());
     }
 
+    public function testPackageDetails(): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $versions = [
+            new Version(Uuid::uuid4(), '1.0.0', 'someref', 1234, new \DateTimeImmutable()),
+            new Version(Uuid::uuid4(), '1.0.1', 'ref2', 1048576, new \DateTimeImmutable()),
+            new Version(Uuid::uuid4(), '1.1.0', 'lastref', 1073741824, new \DateTimeImmutable()),
+        ];
+        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/buddy', 'Test', '1.1.1', new \DateTimeImmutable(), $versions);
+
+        $this->client->request('GET', $this->urlTo('organization_package_details', [
+            'organization' => 'buddy',
+            'package' => $packageId,
+        ]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        self::assertStringContainsString('buddy-works/buddy details', $this->lastResponseBody());
+        self::assertStringContainsString('Test', $this->lastResponseBody());
+        self::assertStringContainsString('Available versions', $this->lastResponseBody());
+        foreach ($versions as $version) {
+            self::assertStringContainsString($version->version(), $this->lastResponseBody());
+            self::assertStringContainsString($version->reference(), $this->lastResponseBody());
+        }
+    }
+
     public function testPackageStats(): void
     {
         $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
@@ -453,6 +480,20 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertStringContainsString('Organization alias has been successfully changed.', $this->lastResponseBody());
     }
 
+    public function testChangeAnonymousAccess(): void
+    {
+        $this->fixtures->createOrganization('buddy', $this->userId);
+        $this->client->followRedirects();
+        $this->client->request('GET', $this->urlTo('organization_settings', ['organization' => 'buddy']));
+        $this->client->submitForm('changeAnonymousAccess', [
+            'hasAnonymousAccess' => true,
+        ]);
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        self::assertStringContainsString('repman', $this->lastResponseBody());
+        self::assertStringContainsString('Anonymous access has been successfully changed.', $this->lastResponseBody());
+    }
+
     public function testRemoveOrganization(): void
     {
         $buddyId = $this->fixtures->createOrganization('buddy inc', $this->userId);
@@ -521,7 +562,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         $this->fixtures->addScanResult($packageId, 'ok');
         $this->fixtures->addScanResult($package2Id, 'error', [
             'exception' => [
-                'RuntimeException' => 'Lock file not found',
+                'RuntimeException' => 'Some error',
             ],
         ]);
 
@@ -530,7 +571,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertStringContainsString('ok', $this->lastResponseBody());
         self::assertStringContainsString('no advisories', $this->lastResponseBody());
         self::assertStringContainsString('error', $this->lastResponseBody());
-        self::assertStringContainsString('&lt;b&gt;RuntimeException&lt;/b&gt; - Lock file not found', $this->lastResponseBody());
+        self::assertStringContainsString('&lt;b&gt;RuntimeException&lt;/b&gt; - Some error', $this->lastResponseBody());
     }
 
     public function testPackageScanResultsWithOkStatus(): void
@@ -624,7 +665,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
 
         $this->fixtures->addScanResult($packageId, 'error', [
             'exception' => [
-                'RuntimeException' => 'Lock file not found',
+                'RuntimeException' => 'Some error',
             ],
         ]);
 
@@ -635,6 +676,105 @@ final class OrganizationControllerTest extends FunctionalTestCase
 
         self::assertStringContainsString($version, $this->lastResponseBody());
         self::assertStringContainsString('error', $this->lastResponseBody());
-        self::assertStringContainsString('<b>RuntimeException</b> - Lock file not found', $this->lastResponseBody());
+        self::assertStringContainsString('<b>RuntimeException</b> - Some error', $this->lastResponseBody());
+    }
+
+    public function testPackageScanResultsWithNaStatus(): void
+    {
+        $organization = 'buddy';
+        $version = '1.2.3';
+
+        $buddyId = $this->fixtures->createOrganization($organization, $this->userId);
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $this->fixtures->syncPackageWithData(
+            $packageId,
+            'buddy-works/repman',
+            'Repository manager',
+            $version,
+            new \DateTimeImmutable()
+        );
+
+        $this->fixtures->addScanResult($packageId, 'n/a', []);
+
+        $this->client->request('GET', $this->urlTo('organization_package_scan_results', [
+            'organization' => $organization,
+            'package' => $packageId,
+        ]));
+
+        self::assertStringContainsString($version, $this->lastResponseBody());
+        self::assertStringContainsString('n/a', $this->lastResponseBody());
+        self::assertStringContainsString('composer.lock not present', $this->lastResponseBody());
+    }
+
+    public function testOverviewAllowedForAnonymousUser(): void
+    {
+        $otherId = $this->fixtures->createAdmin('cto@buddy.works', 'strong');
+        $organizationId = $this->fixtures->createOrganization('public', $otherId);
+
+        $this->fixtures->enableAnonymousUserAccess($organizationId);
+
+        if (static::$booted) {
+            self::ensureKernelShutdown();
+        }
+        $this->client = static::createClient();
+
+        $this->client->request('GET', $this->urlTo('organization_overview', ['organization' => 'public']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+    }
+
+    public function testPackagesAllowedForAnonymousUser(): void
+    {
+        $otherId = $this->fixtures->createAdmin('cto@buddy.works', 'strong');
+        $organizationId = $this->fixtures->createOrganization('public', $otherId);
+
+        $this->fixtures->enableAnonymousUserAccess($organizationId);
+
+        if (static::$booted) {
+            self::ensureKernelShutdown();
+        }
+        $this->client = static::createClient();
+
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'public']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+    }
+
+    public function testTokensNotAllowedForAnonymousUser(): void
+    {
+        $otherId = $this->fixtures->createAdmin('cto@buddy.works', 'strong');
+        $organizationId = $this->fixtures->createOrganization('public', $otherId);
+
+        $this->fixtures->enableAnonymousUserAccess($organizationId);
+
+        if (static::$booted) {
+            self::ensureKernelShutdown();
+        }
+        $this->client = static::createClient();
+        $this->client->request('GET', $this->urlTo('organization_tokens', ['organization' => 'public']));
+
+        self::assertTrue($this->client->getResponse()->isRedirect($this->urlTo('app_login')));
+    }
+
+    public function testNonExistingOrganizationForAnonymousUser(): void
+    {
+        if (static::$booted) {
+            self::ensureKernelShutdown();
+        }
+        $this->client = static::createClient();
+        $this->client->request('GET', $this->urlTo('organization_overview', ['organization' => 'non-existing']));
+
+        self::assertTrue($this->client->getResponse()->isRedirect($this->urlTo('app_login')));
+    }
+
+    public function testPublicOrganizationOverviewAllowedForAnotherUser(): void
+    {
+        $otherId = $this->fixtures->createAdmin('cto@buddy.works', 'strong');
+        $organizationId = $this->fixtures->createOrganization('public', $otherId);
+
+        $this->fixtures->enableAnonymousUserAccess($organizationId);
+        $this->client->request('GET', $this->urlTo('organization_overview', ['organization' => 'public']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
     }
 }

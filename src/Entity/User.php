@@ -9,15 +9,13 @@ use Buddy\Repman\Entity\User\OAuthToken;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
-use Munus\Control\Option;
 use Ramsey\Uuid\UuidInterface;
-use Symfony\Component\Security\Core\User\UserInterface;
 
 /**
  * @ORM\Entity(repositoryClass="Buddy\Repman\Repository\UserRepository")
  * @ORM\Table(name="`user`")
  */
-class User implements UserInterface
+class User
 {
     const STATUS_ENABLED = 'enabled';
 
@@ -89,6 +87,11 @@ class User implements UserInterface
     private Collection $oauthTokens;
 
     /**
+     * @ORM\Column(type="boolean")
+     */
+    private bool $emailScanResult = true;
+
+    /**
      * @param array<string> $roles
      */
     public function __construct(UuidInterface $id, string $email, string $emailConfirmToken, array $roles)
@@ -141,16 +144,6 @@ class User implements UserInterface
         return $this->emailConfirmedAt;
     }
 
-    public function emailConfirmToken(): string
-    {
-        return $this->emailConfirmToken;
-    }
-
-    public function isEmailConfirmed(): bool
-    {
-        return !is_null($this->emailConfirmedAt());
-    }
-
     public function id(): UuidInterface
     {
         return $this->id;
@@ -162,35 +155,6 @@ class User implements UserInterface
     }
 
     /**
-     * A visual identifier that represents this user.
-     *
-     * @see UserInterface
-     */
-    public function getUsername(): string
-    {
-        return $this->getEmail();
-    }
-
-    /**
-     * @return array<string>
-     *
-     * @see UserInterface
-     */
-    public function getRoles(): array
-    {
-        // deny all access
-        if ($this->isDisabled()) {
-            return [];
-        }
-
-        $roles = $this->roles;
-        // guarantee every user at least has ROLE_USER
-        $roles[] = 'ROLE_USER';
-
-        return array_unique($roles);
-    }
-
-    /**
      * @param string[] $roles
      */
     public function changeRoles(array $roles): void
@@ -198,39 +162,14 @@ class User implements UserInterface
         $this->roles = array_values(array_unique($roles));
     }
 
-    /**
-     * @see UserInterface
-     */
     public function getPassword(): string
     {
         return $this->password;
     }
 
-    public function setPassword(string $password): self
+    public function setPassword(string $password): void
     {
         $this->password = $password;
-
-        return $this;
-    }
-
-    /**
-     * @return null
-     *
-     * @see UserInterface
-     */
-    public function getSalt()
-    {
-        // not needed when using the "bcrypt" algorithm in security.yaml
-        return null;
-    }
-
-    /**
-     * @see UserInterface
-     */
-    public function eraseCredentials(): void
-    {
-        // If you store any temporary, sensitive data on the user, clear it here
-        // $this->plainPassword = null;
     }
 
     /**
@@ -241,23 +180,14 @@ class User implements UserInterface
         return $this->memberships->map(fn (Member $member) => $member->organization());
     }
 
-    public function disable(): self
+    public function disable(): void
     {
         $this->status = self::STATUS_DISABLED;
-
-        return $this;
     }
 
-    public function enable(): self
+    public function enable(): void
     {
         $this->status = self::STATUS_ENABLED;
-
-        return $this;
-    }
-
-    public function isDisabled(): bool
-    {
-        return $this->status === self::STATUS_DISABLED;
     }
 
     public function changePassword(string $password): void
@@ -294,20 +224,6 @@ class User implements UserInterface
         }
     }
 
-    /**
-     * @return Option<string>
-     */
-    public function firstOrganizationAlias(): Option
-    {
-        /** @var Member|false $first */
-        $first = $this->memberships->first();
-        if ($first === false) {
-            return Option::none();
-        }
-
-        return Option::some($first->organization()->alias());
-    }
-
     public function addMembership(Member $member): void
     {
         if (!$this->memberships->filter(fn (Member $m) => $m->userId()->equals($member->userId()))->isEmpty()) {
@@ -315,5 +231,20 @@ class User implements UserInterface
         }
 
         $this->memberships->add($member);
+    }
+
+    public function emailScanResult(): bool
+    {
+        return $this->emailScanResult;
+    }
+
+    public function hasEmailConfirmed(): bool
+    {
+        return $this->emailConfirmedAt !== null;
+    }
+
+    public function setEmailScanResult(bool $emailScanResult): void
+    {
+        $this->emailScanResult = $emailScanResult;
     }
 }

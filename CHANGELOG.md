@@ -11,6 +11,65 @@ On next release:
 
 ## [Unreleased]
 
+## [0.5.0] - 2020-08-04
+### Changed
+- higher memory limits ([#219](https://github.com/repman-io/repman/pull/219), [#220](https://github.com/repman-io/repman/pull/220))
+- move all proxy logic to Proxy class ([#223](https://github.com/repman-io/repman/pull/223))
+- use async and stream for downloading metadata and distributions files ([#226](https://github.com/repman-io/repman/pull/226))
+
+### Added
+- serve static proxy metadata and use v2 endpoint for dist lookup ([#222](https://github.com/repman-io/repman/pull/222))
+- sync proxy metadata command ([#224](https://github.com/repman-io/repman/pull/224))
+- migration for better auto upgrade to 0.5.0 ([#227](https://github.com/repman-io/repman/pull/227))
+- static proxy with metadata cache ([#229](https://github.com/repman-io/repman/pull/229))
+- cache headers for packages.json ([#232](https://github.com/repman-io/repman/pull/232))
+- subversion client ([#230](https://github.com/repman-io/repman/pull/230), [#231](https://github.com/repman-io/repman/pull/231))
+- create `.gitattributes` for better dist export ([#235](https://github.com/repman-io/repman/pull/235))
+- telemetry ([#225](https://github.com/repman-io/repman/pull/225), [#234](https://github.com/repman-io/repman/pull/234))
+- technical email ([#237](https://github.com/repman-io/repman/pull/237/files))
+
+### Fixed
+- migration syntax ([#236](https://github.com/repman-io/repman/pull/236))
+- updating version date ([#238](https://github.com/repman-io/repman/pull/238), thanks @nickygerritsen)
+
+## [0.4.1] - 2020-07-15
+### Fixed
+- Add support for IPv6 addresses ([#216](https://github.com/repman-io/repman/pull/216), thanks @nickygerritsen)
+- Fix user voters with anonymous access ([#215](https://github.com/repman-io/repman/pull/215))
+
+## [0.4.0] - 2020-07-13
+### Added
+- Registration config options ([#200](https://github.com/repman-io/repman/pull/200), thanks @nickygerritsen)
+- Anonymous access to organization ([#201](https://github.com/repman-io/repman/pull/201))
+- Basic support for Composer v2 ([#205](https://github.com/repman-io/repman/pull/205))
+  - proxy support for metadata-url (thanks @sadortun)
+  - repo support for metadata-url
+- Package versions view ([#208](https://github.com/repman-io/repman/pull/208), thanks @nickygerritsen)
+
+### Changed
+- Unpack and update dependencies ([#204](https://github.com/repman-io/repman/pull/204))
+- Containers restart policy ([#211](https://github.com/repman-io/repman/pull/211))
+
+## [0.3.0] - 2020-06-05
+### Added
+- Security vulnerability scanner for private packages (#170, #171, #176, #177, #182, #183, #184, #190, #197)
+- Sending scan results email to organization members (#194, #196)
+- Allow user to disable account registration (#152)
+- Create .htaccess (#163)
+- Add repman:create:user cli command (#181)
+- Add repman:package:synchronize cli command (#185, #186)
+
+### Changed
+- Hide oauth providers buttons when env var not configured (#167)
+- Create user security read model - clean user domain (#188)
+- Update symfony/mailer to 5.0.9 (#195)
+
+### Fixed
+- Fix GitLab custom instance url not being picked up by oauth client (#156)
+- Use gitlab custom url in ComposerPackageSynchronizer (#162)
+- Fix provider and dist removal (#168)
+- Write custom Gitlab URL to gitlab-domains composer option (#179)
+
 ## [0.2.1] - 2020-05-07
 ### Security
 - prevention of guessing package uuid for organization package endpoints (#148)
@@ -22,7 +81,7 @@ On next release:
 - Cleanup JS; Fix number of days in admin stats view; Force referrer in GA (#143, #144)
 - handle package not found exception on app level (#142)
 - tuning php-fpm configuration for better resources utilization (Ansible) (#141)
-- add curl and pdo_pgsql to required php extensions (#140) 
+- add curl and pdo_pgsql to required php extensions (#140)
 
 ## [0.2.0] - 2020-05-05
 ### Added
@@ -59,17 +118,17 @@ On next release:
 
 ## [0.1.1] - 2020-04-22
 ### BC break
-- user email is now change to lowercase with migration 
+- user email is now change to lowercase with migration
     - if a user with the same e-mail registered in the application but with different character sizes then you will have to manually delete it before starting the migration
 
 ### Added
-- Clickable repo url link on packages list (#75) 
+- Clickable repo url link on packages list (#75)
 
-### Changed  
+### Changed
 - Use lock to prevent multiple jobs run simultaneously (#70)
 - Internal CI/CD configuration
 
-### Fixed 
+### Fixed
 - Fix issue with case sensitive emails (#88)
 - Typo on register form (#74)
 

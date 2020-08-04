@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Controller;
 
-use Buddy\Repman\Entity\User;
+use Buddy\Repman\Form\Type\Organization\CreateType;
+use Buddy\Repman\Form\Type\User\ChangeEmailPreferencesType;
 use Buddy\Repman\Form\Type\User\ChangePasswordType;
+use Buddy\Repman\Message\Organization\CreateOrganization;
+use Buddy\Repman\Message\Organization\GenerateToken;
+use Buddy\Repman\Message\User\ChangeEmailPreferences;
 use Buddy\Repman\Message\User\ChangePassword;
 use Buddy\Repman\Message\User\RemoveOAuthToken;
 use Buddy\Repman\Message\User\RemoveUser;
 use Buddy\Repman\Message\User\SendConfirmToken;
 use Buddy\Repman\Query\User\UserQuery;
+use Buddy\Repman\Security\Model\User;
+use Buddy\Repman\Service\Organization\AliasGenerator;
+use Ramsey\Uuid\Uuid;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -31,16 +38,23 @@ final class UserController extends AbstractController
     public function profile(Request $request): Response
     {
         $this->denyAccessUnlessGranted('IS_AUTHENTICATED_REMEMBERED');
-        $oauthTokens = $this->userQuery->findAllOAuthTokens($this->getUser()->id()->toString());
-        $form = $this->createForm(ChangePasswordType::class);
-        $form->handleRequest($request);
+        $oauthTokens = $this->userQuery->findAllOAuthTokens($this->getUser()->id());
 
-        if ($form->isSubmitted() && $form->isValid()) {
+        $passwordForm = $this->createForm(ChangePasswordType::class);
+        $passwordForm->handleRequest($request);
+
+        $emailPreferencesForm = $this->createForm(ChangeEmailPreferencesType::class, [
+            'emailScanResult' => $this->getUser()->emailScanResult(),
+        ], [
+            'action' => $this->generateUrl('user_email_preferences'),
+        ]);
+
+        if ($passwordForm->isSubmitted() && $passwordForm->isValid()) {
             $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
 
             $this->dispatchMessage(new ChangePassword(
-                $this->getUser()->id()->toString(),
-                $form->get('plainPassword')->getData()
+                $this->getUser()->id(),
+                $passwordForm->get('plainPassword')->getData()
             ));
             $this->addFlash('success', 'Your password has been changed');
 
@@ -48,9 +62,29 @@ final class UserController extends AbstractController
         }
 
         return $this->render('user/profile.html.twig', [
-            'form' => $form->createView(),
-            'oauth_tokens' => $oauthTokens,
+            'passwordForm' => $passwordForm->createView(),
+            'emailPreferencesForm' => $emailPreferencesForm->createView(),
+            'oauthTokens' => $oauthTokens,
         ]);
+    }
+
+    /**
+     * @Route(path="/user/email-preferences", name="user_email_preferences", methods={"POST"})
+     */
+    public function emailPreferences(Request $request): Response
+    {
+        $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
+
+        $emailPreferencesForm = $this->createForm(ChangeEmailPreferencesType::class);
+        $emailPreferencesForm->handleRequest($request);
+
+        $this->dispatchMessage(new ChangeEmailPreferences(
+            $this->getUser()->id(),
+            $emailPreferencesForm->get('emailScanResult')->getData()
+        ));
+        $this->addFlash('success', 'Email preferences have been changed');
+
+        return $this->redirectToRoute('user_profile');
     }
 
     /**
@@ -59,7 +93,7 @@ final class UserController extends AbstractController
     public function remove(): Response
     {
         $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
-        $this->dispatchMessage(new RemoveUser($this->getUser()->id()->toString()));
+        $this->dispatchMessage(new RemoveUser($this->getUser()->id()));
         $this->addFlash('success', 'User has been successfully removed');
 
         return $this->redirectToRoute('index');
@@ -72,7 +106,7 @@ final class UserController extends AbstractController
     {
         $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
         $this->dispatchMessage(new SendConfirmToken(
-            $this->getUser()->getEmail(),
+            $this->getUser()->email(),
             $this->getUser()->emailConfirmToken()
         ));
         $this->addFlash('success', 'Email sent successfully');
@@ -86,7 +120,7 @@ final class UserController extends AbstractController
     public function removeOAuthToken(string $type): Response
     {
         $this->denyAccessUnlessGranted('IS_AUTHENTICATED_FULLY');
-        $this->dispatchMessage(new RemoveOAuthToken($this->getUser()->id()->toString(), $type));
+        $this->dispatchMessage(new RemoveOAuthToken($this->getUser()->id(), $type));
         $this->addFlash('success', sprintf('%s has been successfully unlinked.', \ucfirst($type)));
 
         return $this->redirectToRoute('user_profile');
@@ -98,5 +132,31 @@ final class UserController extends AbstractController
         $user = parent::getUser();
 
         return $user;
+    }
+
+    /**
+     * @Route("/user/organization/new", name="organization_create", methods={"GET","POST"})
+     */
+    public function createOrganization(Request $request, AliasGenerator $aliasGenerator): Response
+    {
+        $form = $this->createForm(CreateType::class);
+        $form->handleRequest($request);
+
+        if ($form->isSubmitted() && $form->isValid()) {
+            $this->dispatchMessage(new CreateOrganization(
+                $id = Uuid::uuid4()->toString(),
+                $this->getUser()->id(),
+                $name = $form->get('name')->getData()
+            ));
+            $this->dispatchMessage(new GenerateToken($id, 'default'));
+
+            $this->addFlash('success', sprintf('Organization "%s" has been created', $name));
+
+            return $this->redirectToRoute('organization_overview', ['organization' => $aliasGenerator->generate($name)]);
+        }
+
+        return $this->render('organization/create.html.twig', [
+            'form' => $form->createView(),
+        ]);
     }
 }

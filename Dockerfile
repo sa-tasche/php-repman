@@ -10,6 +10,7 @@ RUN apk update && \
     $PHPIZE_DEPS \
     bash \
     git \
+    subversion \
     zip \
     unzip \
     postgresql-dev \
@@ -32,6 +33,12 @@ RUN ln -snf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime && \
     echo ${TIMEZONE} > /etc/timezone && \
     printf '[PHP]\ndate.timezone = "%s"\n', "$TIMEZONE" > \
     /usr/local/etc/php/conf.d/tzone.ini && "date"
+
+# set memory limit
+RUN echo "memory_limit=512M" > /usr/local/etc/php/conf.d/memory-limit.ini
+
+# hide X-Powered-By in reponse header
+RUN echo "expose_php=off" > /usr/local/etc/php/conf.d/expose.ini
 
 # automatically add new host keys to the user known hosts
 RUN printf "Host *\n    StrictHostKeyChecking no" > /etc/ssh/ssh_config

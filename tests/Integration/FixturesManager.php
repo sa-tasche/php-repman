@@ -6,6 +6,8 @@ namespace Buddy\Repman\Tests\Integration;
 
 use Buddy\Repman\Entity\Organization\Member;
 use Buddy\Repman\Entity\Organization\Package\ScanResult;
+use Buddy\Repman\Entity\Organization\Package\Version;
+use Buddy\Repman\Message\Admin\ChangeConfig;
 use Buddy\Repman\Message\Organization\AddDownload;
 use Buddy\Repman\Message\Organization\AddPackage;
 use Buddy\Repman\Message\Organization\CreateOrganization;
@@ -15,10 +17,12 @@ use Buddy\Repman\Message\Organization\Member\InviteUser;
 use Buddy\Repman\Message\Organization\SynchronizePackage;
 use Buddy\Repman\Message\Proxy\AddDownloads;
 use Buddy\Repman\Message\User\AddOAuthToken;
+use Buddy\Repman\Message\User\ConfirmEmail;
 use Buddy\Repman\Message\User\CreateOAuthUser;
 use Buddy\Repman\Message\User\CreateUser;
 use Buddy\Repman\Message\User\DisableUser;
 use Buddy\Repman\MessageHandler\Proxy\AddDownloadsHandler;
+use Buddy\Repman\Repository\OrganizationRepository;
 use Buddy\Repman\Repository\PackageRepository;
 use Buddy\Repman\Repository\ScanResultRepository;
 use Buddy\Repman\Service\Organization\TokenGenerator;
@@ -62,9 +66,9 @@ final class FixturesManager
         $this->dispatchMessage(new CreateOAuthUser($email));
     }
 
-    public function createAdmin(string $email, string $password): string
+    public function createAdmin(string $email, string $password, ?string $confirmToken = null): string
     {
-        return $this->createUser($email, $password, ['ROLE_ADMIN']);
+        return $this->createUser($email, $password, ['ROLE_ADMIN'], $confirmToken);
     }
 
     public function createOrganization(string $name, string $ownerId): string
@@ -180,9 +184,12 @@ final class FixturesManager
         $this->container->get(EntityManagerInterface::class)->flush();
     }
 
-    public function syncPackageWithData(string $packageId, string $name, string $description, string $latestReleasedVersion, \DateTimeImmutable $latestReleaseDate): void
+    /**
+     * @param Version[] $versions
+     */
+    public function syncPackageWithData(string $packageId, string $name, string $description, string $latestReleasedVersion, \DateTimeImmutable $latestReleaseDate, array $versions = []): void
     {
-        $this->container->get(PackageSynchronizer::class)->setData($name, $description, $latestReleasedVersion, $latestReleaseDate);
+        $this->container->get(PackageSynchronizer::class)->setData($name, $description, $latestReleasedVersion, $latestReleaseDate, $versions);
         $this->dispatchMessage(new SynchronizePackage($packageId));
         $this->container->get(EntityManagerInterface::class)->flush();
     }
@@ -236,6 +243,24 @@ final class FixturesManager
             )
         );
         $this->container->get(EntityManagerInterface::class)->flush();
+    }
+
+    public function confirmUserEmail(string $token): void
+    {
+        $this->dispatchMessage(new ConfirmEmail($token));
+        $this->container->get(EntityManagerInterface::class)->flush();
+    }
+
+    public function enableAnonymousUserAccess(string $organizationId): void
+    {
+        $organization = $this->container->get(OrganizationRepository::class)->getById(Uuid::fromString($organizationId));
+        $organization->changeAnonymousAccess(true);
+        $this->container->get('doctrine.orm.entity_manager')->flush($organization);
+    }
+
+    public function changeConfig(string $key, string $value): void
+    {
+        $this->dispatchMessage(new ChangeConfig([$key => $value]));
     }
 
     private function dispatchMessage(object $message): void
