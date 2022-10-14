@@ -17,10 +17,12 @@
         {% for package in packages %}
             <tr>
                 <td>{{ package }}</td>
-                <td>{{ downloads[package].downloads ?? 0 }}</td>
+                <td class="number-format">{{ downloads[package].downloads ?? 0 }}</td>
                 <td>
                     {% if downloads[package] is defined %}
-                        <span title="{{ downloads[package].lastDownload | date }}">{{ downloads[package].lastDownload | time_diff }}</span>
+                        <span data-toggle="tooltip" title="{{ downloads[package].lastDownload|date_time }} ({{ gmt_offset() }})">
+                            {{ downloads[package].lastDownload|date_time|time_diff }}
+                        </span>
                     {% endif %}
                 </td>
                 <td>

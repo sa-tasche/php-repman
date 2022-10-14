@@ -7,7 +7,7 @@ namespace Buddy\Repman\Repository;
 use Buddy\Repman\Entity\User;
 use Buddy\Repman\Security\Model\User as SecurityUser;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
-use Doctrine\Common\Persistence\ManagerRegistry;
+use Doctrine\Persistence\ManagerRegistry;
 use Ramsey\Uuid\UuidInterface;
 use Symfony\Component\Security\Core\Exception\UnsupportedUserException;
 use Symfony\Component\Security\Core\User\PasswordUpgraderInterface;
@@ -29,8 +29,8 @@ class UserRepository extends ServiceEntityRepository implements PasswordUpgrader
 
     public function emailExist(string $email): bool
     {
-        return false !== $this->_em->getConnection()->fetchColumn('SELECT id FROM "user" WHERE email = :email', [
-            ':email' => \mb_strtolower($email),
+        return false !== $this->_em->getConnection()->fetchOne('SELECT id FROM "user" WHERE email = :email', [
+            'email' => \mb_strtolower($email),
         ]);
     }
 
@@ -88,7 +88,7 @@ class UserRepository extends ServiceEntityRepository implements PasswordUpgrader
             throw new UnsupportedUserException(sprintf('Instances of "%s" are not supported.', \get_class($user)));
         }
 
-        $user = $this->getByEmail($user->getUsername());
+        $user = $this->getByEmail($user->getUserIdentifier());
         $user->setPassword($newEncodedPassword);
         $this->_em->persist($user);
         $this->_em->flush();

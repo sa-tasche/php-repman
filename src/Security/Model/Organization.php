@@ -51,6 +51,11 @@ final class Organization implements UserInterface
         return $this->alias;
     }
 
+    public function getUserIdentifier(): string
+    {
+        return $this->alias;
+    }
+
     public function eraseCredentials(): void
     {
     }

@@ -13,3 +13,29 @@
   user:
     name: "{{ system_user }}"
     shell: /bin/bash
+
+- name: Set nofile soft limit for the main system user
+  pam_limits:
+    domain: "{{ system_user }}"
+    limit_type: soft
+    limit_item: nofile
+    value: "65535"
+
+- name: Set nofile hard limit for the main system user
+  pam_limits:
+    domain: "{{ system_user }}"
+    limit_type: hard
+    limit_item: nofile
+    value: "65535"
+
+- name: Set somaxconn limit for php-fpm socket
+  sysctl:
+    name: net.core.somaxconn
+    value: '2048'
+    state: present
+
+- name: Set netdev_max_backlog limit for php-fpm socket
+  sysctl:
+    name: net.core.netdev_max_backlog
+    value: '4096'
+    state: present

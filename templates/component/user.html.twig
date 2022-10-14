@@ -1,6 +1,6 @@
 {% macro anonymousIcon(subject) %}
     {% if subject.hasAnonymousAccess %}
-        <span data-toggle="tooltip" data-placement="bottom" data-content="Organization with anonymous access">
+        <span data-toggle="tooltip" data-placement="bottom" title="Organization with anonymous access">
             {% include 'svg/unlock.svg' %}
         </span>
     {% endif %}
@@ -13,7 +13,7 @@
         <div class="dropdown">
             <a href="#" data-toggle="dropdown"
                class="align-items-center ml-2 btn btn-secondary">
-                <span class="ml-2 d-none d-sm-block lh-1">
+                <span class="d-none d-sm-block lh-1">
                     {% if organization is defined %}
                         {{ icons.anonymousIcon(organization) }} {{ organization.name }}
                     {% else %}
@@ -46,7 +46,7 @@
                         {% include 'svg/user.svg' %}
                     </span>
                     <span class="ml-2 d-none d-lg-block lh-1">
-                        {{ app.user.username }}
+                        {{ app.user.userIdentifier }}
                         {% if is_granted('ROLE_ADMIN') %}
                             <span class="text-muted d-block mt-1 text-h6">Administrator</span>
                         {% endif %}
@@ -78,6 +78,9 @@
                     {% endif %}
                     <a class="dropdown-item" href="{{ url('user_profile') }}">
                         {% include 'svg/user.svg' %} Profile
+                    </a>
+                    <a class="dropdown-item" href="{{ url('user_api_tokens') }}">
+                        {% include 'svg/lock.svg' %} API tokens
                     </a>
                     <div class="dropdown-divider"></div>
                     <a class="dropdown-item" href="{{ url('app_logout') }}">

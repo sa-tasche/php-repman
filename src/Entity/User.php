@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Buddy\Repman\Entity;
 
 use Buddy\Repman\Entity\Organization\Member;
+use Buddy\Repman\Entity\User\ApiToken;
 use Buddy\Repman\Entity\User\OAuthToken;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
+use Ramsey\Uuid\Uuid;
 use Ramsey\Uuid\UuidInterface;
 
 /**
@@ -92,17 +94,30 @@ class User
     private bool $emailScanResult = true;
 
     /**
+     * @var Collection<int,ApiToken>|ApiToken[]
+     * @ORM\OneToMany(targetEntity="Buddy\Repman\Entity\User\ApiToken", mappedBy="user", cascade={"persist"}, orphanRemoval=true)
+     */
+    private Collection $apiTokens;
+
+    /**
+     * @ORM\Column(type="string", length=255)
+     */
+    private string $timezone;
+
+    /**
      * @param array<string> $roles
      */
-    public function __construct(UuidInterface $id, string $email, string $emailConfirmToken, array $roles)
+    public function __construct(UuidInterface $id, string $email, string $emailConfirmToken, array $roles, ?string $timezone = null)
     {
         $this->id = $id;
         $this->email = \mb_strtolower($email);
         $this->emailConfirmToken = $emailConfirmToken;
         $this->roles = array_values(array_unique($roles));
+        $this->timezone = $timezone ?? date_default_timezone_get();
         $this->createdAt = new \DateTimeImmutable();
         $this->memberships = new ArrayCollection();
         $this->oauthTokens = new ArrayCollection();
+        $this->apiTokens = new ArrayCollection();
     }
 
     public function setResetPasswordToken(string $token): void
@@ -246,5 +261,34 @@ class User
     public function setEmailScanResult(bool $emailScanResult): void
     {
         $this->emailScanResult = $emailScanResult;
+    }
+
+    public function addApiToken(ApiToken $token): void
+    {
+        $token->setUser($this);
+        $this->apiTokens->add($token);
+    }
+
+    public function regenerateApiToken(string $value, string $newValue): void
+    {
+        foreach ($this->apiTokens as $token) {
+            if ($token->isEqual($value)) {
+                $token->regenerate($newValue);
+            }
+        }
+    }
+
+    public function removeApiToken(string $value): void
+    {
+        foreach ($this->apiTokens as $token) {
+            if ($token->isEqual($value)) {
+                $this->apiTokens->removeElement($token);
+            }
+        }
+    }
+
+    public function changeTimezone(string $timezone): void
+    {
+        $this->timezone = $timezone;
     }
 }

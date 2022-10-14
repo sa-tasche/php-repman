@@ -9,25 +9,22 @@ services:
     Buddy\Repman\Service\Downloader:
         class: Buddy\Repman\Tests\Doubles\FakeDownloader
 
-    Buddy\Repman\Service\Cache:
-        class: Buddy\Repman\Service\Cache\InMemoryCache
-
     Buddy\Repman\Service\Organization\TokenGenerator:
         class: Buddy\Repman\Tests\Doubles\FakeTokenGenerator
 
     Buddy\Repman\Service\PackageSynchronizer:
         class: Buddy\Repman\Tests\Doubles\FakePackageSynchronizer
 
-    Buddy\Repman\Service\GitHubApi:
+    Buddy\Repman\Service\Integration\GitHubApi:
         class: Buddy\Repman\Tests\Doubles\FakeGitHubApi
 
-    Buddy\Repman\Service\GitLabApi:
+    Buddy\Repman\Service\Integration\GitLabApi:
         class: Buddy\Repman\Tests\Doubles\FakeGitLabApi
 
-    Buddy\Repman\Service\BitbucketApi:
+    Buddy\Repman\Service\Integration\BitbucketApi:
         class: Buddy\Repman\Tests\Doubles\FakeBitbucketApi
 
-    Buddy\Repman\Service\BuddyApi:
+    Buddy\Repman\Service\Integration\BuddyApi:
         class: Buddy\Repman\Tests\Doubles\FakeBuddyApi
 
     Buddy\Repman\Tests\Doubles\HttpClientStub:

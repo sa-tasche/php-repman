@@ -22,35 +22,40 @@ use Buddy\Repman\Message\Organization\RegenerateToken;
 use Buddy\Repman\Message\Organization\RemoveOrganization;
 use Buddy\Repman\Message\Organization\RemovePackage;
 use Buddy\Repman\Message\Organization\RemoveToken;
-use Buddy\Repman\Message\Organization\SynchronizePackage;
 use Buddy\Repman\Message\Security\ScanPackage;
+use Buddy\Repman\Query\Filter;
 use Buddy\Repman\Query\User\Model\Installs\Day;
 use Buddy\Repman\Query\User\Model\Organization;
+use Buddy\Repman\Query\User\Model\Organization\Token;
 use Buddy\Repman\Query\User\Model\Package;
+use Buddy\Repman\Query\User\Model\PackageDetails;
 use Buddy\Repman\Query\User\OrganizationQuery;
 use Buddy\Repman\Query\User\PackageQuery;
+use Buddy\Repman\Query\User\PackageQuery\Filter as PackageFilter;
 use Buddy\Repman\Security\Model\User;
-use Buddy\Repman\Service\ExceptionHandler;
-use Ramsey\Uuid\Uuid;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Routing\Annotation\Route;
 
 final class OrganizationController extends AbstractController
 {
     private PackageQuery $packageQuery;
     private OrganizationQuery $organizationQuery;
-    private ExceptionHandler $exceptionHandler;
+    private MessageBusInterface $messageBus;
 
-    public function __construct(PackageQuery $packageQuery, OrganizationQuery $organizationQuery, ExceptionHandler $exceptionHandler)
-    {
+    public function __construct(
+        PackageQuery $packageQuery,
+        OrganizationQuery $organizationQuery,
+        MessageBusInterface $messageBus
+    ) {
         $this->packageQuery = $packageQuery;
         $this->organizationQuery = $organizationQuery;
-        $this->exceptionHandler = $exceptionHandler;
+        $this->messageBus = $messageBus;
     }
 
     /**
@@ -60,6 +65,7 @@ final class OrganizationController extends AbstractController
     {
         return $this->render('organization/overview.html.twig', [
             'organization' => $organization,
+            'token' => $this->organizationQuery->findAnyToken($organization->id()),
             'tokenCount' => $this->organizationQuery->tokenCount($organization->id()),
         ]);
     }
@@ -69,29 +75,21 @@ final class OrganizationController extends AbstractController
      */
     public function packages(Organization $organization, Request $request): Response
     {
-        $count = $this->packageQuery->count($organization->id());
-        $user = parent::getUser();
-        if ($count === 0 && $user instanceof User && $organization->isOwner($user->id())) {
+        $filter = PackageFilter::fromRequest($request, 'name');
+
+        $count = $this->packageQuery->count($organization->id(), $filter);
+
+        // If the filtered count has no results, we need to check if the organization has no packages
+        if ($count === 0 && $this->hasNoPackages($organization)) {
             return $this->redirectToRoute('organization_package_new', ['organization' => $organization->alias()]);
         }
 
         return $this->render('organization/packages.html.twig', [
-            'packages' => $this->packageQuery->findAll($organization->id(), 20, (int) $request->get('offset', 0)),
+            'packages' => $this->packageQuery->findAll($organization->id(), $filter),
+            'filter' => $filter,
             'count' => $count,
             'organization' => $organization,
         ]);
-    }
-
-    /**
-     * @Route("/organization/{organization}/package/{package}", name="organization_package_update", methods={"POST"}, requirements={"organization"="%organization_pattern%","package"="%uuid_pattern%"})
-     */
-    public function updatePackage(Organization $organization, Package $package): Response
-    {
-        $this->dispatchMessage(new SynchronizePackage($package->id()));
-
-        $this->addFlash('success', 'Package will be updated in the background');
-
-        return $this->redirectToRoute('organization_packages', ['organization' => $organization->alias()]);
     }
 
     /**
@@ -102,7 +100,7 @@ final class OrganizationController extends AbstractController
     {
         $this->tryToRemoveWebhook($package);
 
-        $this->dispatchMessage(new RemovePackage(
+        $this->messageBus->dispatch(new RemovePackage(
             $package->id(),
             $organization->id()
         ));
@@ -115,13 +113,19 @@ final class OrganizationController extends AbstractController
     /**
      * @Route("/organization/{organization}/package/{package}/details", name="organization_package_details", methods={"GET"}, requirements={"organization"="%organization_pattern%","package"="%uuid_pattern%"})
      */
-    public function packageDetails(Organization $organization, Package $package, Request $request): Response
+    public function packageDetails(Organization $organization, PackageDetails $package, Request $request): Response
     {
+        $filter = Filter::fromRequest($request);
+
         return $this->render('organization/package/details.html.twig', [
             'organization' => $organization,
             'package' => $package,
+            'filter' => $filter,
             'count' => $this->packageQuery->versionCount($package->id()),
-            'versions' => $this->packageQuery->getVersions($package->id(), 20, (int) $request->get('offset', 0)),
+            'versions' => $this->packageQuery->getVersions($package->id(), $filter),
+            'installs' => $this->packageQuery->getInstalls($package->id(), 0),
+            'packageLinks' => $this->packageQuery->getLinks($package->id(), $organization->id()),
+            'dependantCount' => $package->name() !== null ? $this->packageQuery->getDependantCount($package->name(), $organization->id()) : 0,
         ]);
     }
 
@@ -162,13 +166,13 @@ final class OrganizationController extends AbstractController
         if ($request->isMethod(Request::METHOD_POST)) {
             switch ($package->type()) {
                 case 'github-oauth':
-                    $this->dispatchMessage(new AddGitHubHook($package->id()));
+                    $this->messageBus->dispatch(new AddGitHubHook($package->id()));
                     break;
                 case 'gitlab-oauth':
-                    $this->dispatchMessage(new AddGitLabHook($package->id()));
+                    $this->messageBus->dispatch(new AddGitLabHook($package->id()));
                     break;
                 case 'bitbucket-oauth':
-                    $this->dispatchMessage(new AddBitbucketHook($package->id()));
+                    $this->messageBus->dispatch(new AddBitbucketHook($package->id()));
                     break;
             }
             $this->addFlash('success', sprintf('Webhook for "%s" will be synchronized in background.', $package->name()));
@@ -192,7 +196,7 @@ final class OrganizationController extends AbstractController
         $form->handleRequest($request);
 
         if ($form->isSubmitted() && $form->isValid()) {
-            $this->dispatchMessage(new GenerateToken(
+            $this->messageBus->dispatch(new GenerateToken(
                 $organization->id(),
                 $name = $form->get('name')->getData()
             ));
@@ -213,21 +217,24 @@ final class OrganizationController extends AbstractController
      */
     public function tokens(Organization $organization, Request $request): Response
     {
+        $filter = Filter::fromRequest($request);
+
         return $this->render('organization/tokens.html.twig', [
-            'tokens' => $this->organizationQuery->findAllTokens($organization->id(), 20, (int) $request->get('offset', 0)),
+            'tokens' => $this->organizationQuery->findAllTokens($organization->id(), $filter),
             'count' => $this->organizationQuery->tokenCount($organization->id()),
             'organization' => $organization,
+            'filter' => $filter,
         ]);
     }
 
     /**
      * @Route("/organization/{organization}/token/{token}/regenerate", name="organization_token_regenerate", methods={"POST"}, requirements={"organization"="%organization_pattern%"})
      */
-    public function regenerateToken(Organization $organization, string $token): Response
+    public function regenerateToken(Organization $organization, Token $token): Response
     {
-        $this->dispatchMessage(new RegenerateToken(
+        $this->messageBus->dispatch(new RegenerateToken(
             $organization->id(),
-            $token
+            $token->value()
         ));
 
         $this->addFlash('success', 'Token has been successfully regenerated');
@@ -238,11 +245,11 @@ final class OrganizationController extends AbstractController
     /**
      * @Route("/organization/{organization}/token/{token}", name="organization_token_remove", methods={"DELETE"}, requirements={"organization"="%organization_pattern%"})
      */
-    public function removeToken(Organization $organization, string $token): Response
+    public function removeToken(Organization $organization, Token $token): Response
     {
-        $this->dispatchMessage(new RemoveToken(
+        $this->messageBus->dispatch(new RemoveToken(
             $organization->id(),
-            $token
+            $token->value()
         ));
 
         $this->addFlash('success', 'Token has been successfully removed');
@@ -259,7 +266,7 @@ final class OrganizationController extends AbstractController
         $renameForm = $this->createForm(ChangeNameType::class, ['name' => $organization->name()]);
         $renameForm->handleRequest($request);
         if ($renameForm->isSubmitted() && $renameForm->isValid()) {
-            $this->dispatchMessage(new ChangeName($organization->id(), $renameForm->get('name')->getData()));
+            $this->messageBus->dispatch(new ChangeName($organization->id(), $renameForm->get('name')->getData()));
             $this->addFlash('success', 'Organization name been successfully changed.');
 
             return $this->redirectToRoute('organization_settings', ['organization' => $organization->alias()]);
@@ -268,7 +275,7 @@ final class OrganizationController extends AbstractController
         $aliasForm = $this->createForm(ChangeAliasType::class, ['alias' => $organization->alias()]);
         $aliasForm->handleRequest($request);
         if ($aliasForm->isSubmitted() && $aliasForm->isValid()) {
-            $this->dispatchMessage(new ChangeAlias($organization->id(), $aliasForm->get('alias')->getData()));
+            $this->messageBus->dispatch(new ChangeAlias($organization->id(), $aliasForm->get('alias')->getData()));
             $this->addFlash('success', 'Organization alias has been successfully changed.');
 
             return $this->redirectToRoute('organization_settings', ['organization' => $aliasForm->get('alias')->getData()]);
@@ -277,7 +284,7 @@ final class OrganizationController extends AbstractController
         $anonymousAccessForm = $this->createForm(ChangeAnonymousAccessType::class, ['hasAnonymousAccess' => $organization->hasAnonymousAccess()]);
         $anonymousAccessForm->handleRequest($request);
         if ($anonymousAccessForm->isSubmitted() && $anonymousAccessForm->isValid()) {
-            $this->dispatchMessage(new ChangeAnonymousAccess($organization->id(), $anonymousAccessForm->get('hasAnonymousAccess')->getData()));
+            $this->messageBus->dispatch(new ChangeAnonymousAccess($organization->id(), $anonymousAccessForm->get('hasAnonymousAccess')->getData()));
             $this->addFlash('success', 'Anonymous access has been successfully changed.');
 
             return $this->redirectToRoute('organization_settings', ['organization' => $organization->alias()]);
@@ -297,7 +304,13 @@ final class OrganizationController extends AbstractController
      */
     public function removeOrganization(Organization $organization): Response
     {
-        $this->dispatchMessage(new RemoveOrganization($organization->id()));
+        $offset = 0;
+        while (($packages = $this->packageQuery->findAll($organization->id(), new PackageQuery\Filter($offset, $limit = 100))) !== []) {
+            array_walk($packages, [$this, 'tryToRemoveWebhook']);
+            $offset += $limit;
+        }
+
+        $this->messageBus->dispatch(new RemoveOrganization($organization->id()));
         $this->addFlash('success', sprintf('Organization %s has been successfully removed', $organization->name()));
 
         return $this->redirectToRoute('index');
@@ -322,7 +335,7 @@ final class OrganizationController extends AbstractController
      */
     public function scanPackage(Organization $organization, Package $package): Response
     {
-        $this->dispatchMessage(new ScanPackage($package->id()));
+        $this->messageBus->dispatch(new ScanPackage($package->id()));
 
         $this->addFlash('success', 'Package will be scanned in the background');
 
@@ -334,10 +347,13 @@ final class OrganizationController extends AbstractController
      */
     public function packageScanResults(Organization $organization, Package $package, Request $request): Response
     {
+        $filter = Filter::fromRequest($request);
+
         return $this->render('organization/package/scanResults.html.twig', [
             'organization' => $organization,
             'package' => $package,
-            'results' => $this->packageQuery->getScanResults($package->id(), 20, (int) $request->get('offset', 0)),
+            'filter' => $filter,
+            'results' => $this->packageQuery->getScanResults($package->id(), $filter),
             'count' => $this->packageQuery->getScanResultsCount($package->id()),
         ]);
     }
@@ -348,18 +364,31 @@ final class OrganizationController extends AbstractController
             try {
                 switch ($package->type()) {
                     case 'github-oauth':
-                        $this->dispatchMessage(new RemoveGitHubHook($package->id()));
+                        $this->messageBus->dispatch(new RemoveGitHubHook($package->id()));
                         break;
                     case 'gitlab-oauth':
-                        $this->dispatchMessage(new RemoveGitLabHook($package->id()));
+                        $this->messageBus->dispatch(new RemoveGitLabHook($package->id()));
                         break;
                     case 'bitbucket-oauth':
-                        $this->dispatchMessage(new RemoveBitbucketHook($package->id()));
+                        $this->messageBus->dispatch(new RemoveBitbucketHook($package->id()));
                         break;
                 }
             } catch (HandlerFailedException $exception) {
-                $this->exceptionHandler->handle($exception);
+                $reason = current($exception->getNestedExceptions());
+                $this->addFlash('danger', sprintf(
+                    'Webhook removal failed due to "%s". Please remove it manually.',
+                    $reason !== false ? $reason->getMessage() : $exception->getMessage()
+                ));
             }
         }
+    }
+
+    private function hasNoPackages(Organization $organization): bool
+    {
+        $user = parent::getUser();
+
+        return $user instanceof User &&
+            $organization->isOwner($user->id()) &&
+            $this->packageQuery->count($organization->id(), new PackageFilter()) === 0;
     }
 }

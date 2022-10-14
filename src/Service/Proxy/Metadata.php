@@ -15,18 +15,24 @@ final class Metadata
      */
     private $stream;
 
+    private int $contentSize;
+
+    private ?string $hash;
+
     /**
      * @param resource $stream
      */
-    public function __construct(int $timestamp, $stream)
+    public function __construct(int $timestamp, $stream, int $contentSize, ?string $hash = null)
     {
         $this->timestamp = $timestamp;
         $this->stream = $stream;
+        $this->contentSize = $contentSize;
+        $this->hash = $hash;
     }
 
     public static function fromString(string $string): self
     {
-        return new self(time(), Stream::fromString($string));
+        return new self(\time(), Stream::fromString($string), \strlen($string));
     }
 
     public function timestamp(): int
@@ -40,5 +46,15 @@ final class Metadata
     public function stream()
     {
         return $this->stream;
+    }
+
+    public function hash(): ?string
+    {
+        return $this->hash;
+    }
+
+    public function contentSize(): int
+    {
+        return $this->contentSize;
     }
 }

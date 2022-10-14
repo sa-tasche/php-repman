@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Query\User;
 
+use Buddy\Repman\Query\Filter;
 use Buddy\Repman\Query\User\Model\Installs;
 use Buddy\Repman\Query\User\Model\Organization;
 use Buddy\Repman\Query\User\Model\Organization\Invitation;
@@ -26,7 +27,9 @@ interface OrganizationQuery
     /**
      * @return Token[]
      */
-    public function findAllTokens(string $organizationId, int $limit = 20, int $offset = 0): array;
+    public function findAllTokens(string $organizationId, Filter $filter): array;
+
+    public function findAnyToken(string $organizationId): ?string;
 
     public function tokenCount(string $organizationId): int;
 
@@ -35,7 +38,7 @@ interface OrganizationQuery
     /**
      * @return Member[]
      */
-    public function findAllMembers(string $organizationId, int $limit = 20, int $offset = 0): array;
+    public function findAllMembers(string $organizationId, Filter $filter): array;
 
     public function membersCount(string $organizationId): int;
 
@@ -44,9 +47,14 @@ interface OrganizationQuery
     /**
      * @return Invitation[]
      */
-    public function findAllInvitations(string $organizationId, int $limit = 20, int $offset = 0): array;
+    public function findAllInvitations(string $organizationId, Filter $filter): array;
 
     public function invitationsCount(string $organizationId): int;
 
     public function isInvited(string $organizationId, string $email): bool;
+
+    /**
+     * @return Option<Token>
+     */
+    public function findToken(string $organizationId, string $value): Option;
 }

@@ -14,7 +14,7 @@ final class ReactDownloaderTest extends TestCase
     {
         $packages = __DIR__.'/../../../Resources/packages.json';
 
-        self::assertTrue(is_resource((new ReactDownloader())->getContents($packages)->getOrNull()));
+        self::assertIsResource((new ReactDownloader())->getContents($packages)->getOrNull());
     }
 
     public function testFailedDownload(): void
@@ -38,6 +38,19 @@ final class ReactDownloaderTest extends TestCase
             self::assertTrue($timestamp > 0);
         });
         $downloader->getLastModified('/tmp/not-exists', function (int $timestamp): void {
+            throw new \LogicException('Should not happen');
+        });
+        $downloader->run();
+    }
+
+    public function testAsyncContent(): void
+    {
+        $downloader = new ReactDownloader();
+        $downloader->getAsyncContents('https://repman.io', [], function ($stream): void {
+            $meta = stream_get_meta_data($stream);
+            self::assertTrue($meta['uri'] === 'https://repman.io');
+        });
+        $downloader->getAsyncContents('/tmp/not-exists', [], function ($stream): void {
             throw new \LogicException('Should not happen');
         });
         $downloader->run();

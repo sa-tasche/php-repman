@@ -6,6 +6,8 @@
 parameters:
     package_name_pattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_./~-]+?'
     organization_pattern: '[a-z0-9_-]+' # remember to change in security.yaml (access_control)
+    domain_separator: '%env(resolve:APP_DOMAIN_SEPARATOR)%' # '-' can be used as alternative for simpler certificate handling in 1 organization self-hosted installs
+    organization_separator: '%env(default:domain_separator:resolve:APP_ORGANIZATION_SEPARATOR)%' # secondary separator, see organization_repo_url
     uuid_pattern: '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}'
     dists_dir: '%env(resolve:PROXY_DIST_DIR)%'
     repo_dir: '%env(resolve:PACKAGES_DIST_DIR)%'
@@ -16,6 +18,12 @@ parameters:
     security_advisories_db_dir: '%env(resolve:SECURITY_ADVISORIES_DB_DIR)%'
     security_advisories_db_repo: 'https://github.com/FriendsOfPHP/security-advisories.git'
     instance_id_file: '%kernel.project_dir%/var/instance-id'
+    kernel_version: !php/const Buddy\Repman\Kernel::REPMAN_VERSION
+    storage.aws.endpoint: ~ # Default to null
+    storage.aws.pathstyle: ~ # Default to null
+    storage.aws.key: ~
+    storage.aws.secret: ~
+    storage.aws.opaque_auth: false # Default to false
 
 services:
     # default configuration for services in *this* file
@@ -27,6 +35,7 @@ services:
             $resetPasswordTokenTtl: 86400 # 24h
             Symfony\Component\HttpFoundation\Session\Session $session: '@session'
             $proxyFilesystem: '@proxy.storage'
+            $repoFilesystem: '@repo.storage'
             $instanceIdFile: '%instance_id_file%'
 
     # makes classes in src/ available to be used as services
@@ -41,16 +50,20 @@ services:
         resource: '../src/Controller'
         tags: ['controller.service_arguments']
 
-    # add more service definitions when explicit configuration is needed
-    # please note that last definitions always *replace* previous ones
-    Buddy\Repman\Service\Cache:
-        class: Buddy\Repman\Service\Cache\FileCache
+    Buddy\Repman\Service\Integration\Aws\S3AdapterFactory:
         arguments:
-            - '%dists_dir%'
-            - '@Buddy\Repman\Service\Symfony\SentryExceptionHandler'
+            - '%env(STORAGE_AWS_REGION)%'
+            - '%env(default:storage.aws.opaque_auth:bool:STORAGE_AWS_OPAQUE_AUTH)%'
+            - '%env(default:storage.aws.key:STORAGE_AWS_KEY)%'
+            - '%env(default:storage.aws.secret:STORAGE_AWS_SECRET)%'
+            - '%env(default:storage.aws.endpoint:STORAGE_AWS_ENDPOINT)%'
+            - '%env(default:storage.aws.pathstyle:bool:STORAGE_AWS_PATH_STYLE_ENDPOINT)%'
 
-    Buddy\Repman\Service\Dist\Storage:
-        class: Buddy\Repman\Service\Dist\Storage\FileStorage
+    Aws\S3\S3Client:
+        lazy: true
+        factory:
+            - '@Buddy\Repman\Service\Integration\Aws\S3AdapterFactory'
+            - create
 
     proxy.storage.public:
         public: true
@@ -59,10 +72,7 @@ services:
     Buddy\Repman\Service\Proxy\ProxyRegister:
         public: true
 
-    repman.organization.dist_storage:
-        class: Buddy\Repman\Service\Dist\Storage\FileStorage
-        arguments:
-            $distsDir: '%repo_dir%'
+    repman.organization.dist_storage: '@Buddy\Repman\Service\Dist\Storage'
 
     Buddy\Repman\Service\Mailer\SymfonyMailer:
         arguments:
@@ -70,7 +80,6 @@ services:
 
     Buddy\Repman\Service\Organization\PackageManager:
         arguments:
-            $baseDir: '%repo_dir%'
             $distStorage: '@repman.organization.dist_storage'
 
     Buddy\Repman\Service\PackageSynchronizer\ComposerPackageSynchronizer:
@@ -79,6 +88,10 @@ services:
             $gitlabUrl: '%env(APP_GITLAB_API_URL)%'
 
     Buddy\Repman\Form\Type\Organization\AddPackageType:
+        arguments:
+            $allowedTypes: '%env(csv:APP_ALLOWED_PACKAGE_TYPES)%'
+
+    Buddy\Repman\Form\Type\Api\AddPackageType:
         arguments:
             $allowedTypes: '%env(csv:APP_ALLOWED_PACKAGE_TYPES)%'
 
@@ -98,6 +111,14 @@ services:
     Buddy\Repman\Service\Telemetry:
         arguments:
             $failedTransport: '@messenger.transport.failed'
+
+    Doctrine\Migrations\Version\DbalMigrationFactory: ~
+    Buddy\Repman\Migrations\Factory\MigrationFactoryDecorator:
+        decorates: Doctrine\Migrations\Version\DbalMigrationFactory
+        arguments: ['@Buddy\Repman\Migrations\Factory\MigrationFactoryDecorator.inner', '@service_container']
+
+    Buddy\Repman\Service\Twig\DateExtension:
+        arguments: ['@security.token_storage']
 
     ### Vendor
     Github\Client:
@@ -120,7 +141,8 @@ services:
             - '@?Http\Message\RequestFactory'
             - '@?Http\Message\StreamFactory'
 
-    Bitbucket\ResultPager:
+    Bitbucket\ResultPagerInterface:
+        class: Bitbucket\ResultPager
         arguments:
             - '@Bitbucket\Client'
 
@@ -138,7 +160,7 @@ services:
         arguments:
             - '@Gitlab\Client'
 
-    Buddy\Repman\Service\GitLabApi\RestGitLabApi:
+    Buddy\Repman\Service\Integration\GitLabApi\RestGitLabApi:
         arguments:
             $url: '%env(APP_GITLAB_API_URL)%'
 

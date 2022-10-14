@@ -8,8 +8,7 @@ use Buddy\Repman\Entity\User\OAuthToken;
 use Buddy\Repman\Query\User\Model\Organization;
 use Buddy\Repman\Query\User\UserQuery;
 use Buddy\Repman\Security\Model\User;
-use Buddy\Repman\Service\BitbucketApi;
-use KnpU\OAuth2ClientBundle\Client\ClientRegistry;
+use Buddy\Repman\Service\Integration\BitbucketApi;
 use League\OAuth2\Client\Token\AccessToken;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\IsGranted;
 use Symfony\Component\HttpFoundation\Request;
@@ -32,7 +31,7 @@ final class BitbucketController extends OAuthController
     /**
      * @Route("/auth/bitbucket", name="auth_bitbucket_start", methods={"GET"})
      */
-    public function auth(ClientRegistry $clientRegistry): Response
+    public function auth(): Response
     {
         return $this->oauth->getClient('bitbucket')->redirect(['email'], ['redirect_uri' => $this->generateUrl('login_bitbucket_check', [], UrlGeneratorInterface::ABSOLUTE_URL)]);
     }
@@ -55,14 +54,14 @@ final class BitbucketController extends OAuthController
      * @IsGranted("ROLE_ORGANIZATION_OWNER", subject="organization")
      * @Route("/organization/{organization}/package/add-from-bitbucket", name="fetch_bitbucket_package_token", methods={"GET"}, requirements={"organization"="%organization_pattern%"})
      */
-    public function packageAddFromBitbucket(Organization $organization, UserQuery $userQuery): Response
+    public function packageAddFromBitbucket(Request $request, Organization $organization, UserQuery $userQuery): Response
     {
         /** @var User */
         $user = $this->getUser();
-        if ($userQuery->findOAuthAccessToken($user->id(), OAuthToken::TYPE_BITBUCKET)->isPresent()) {
+        if ($userQuery->hasOAuthAccessToken($user->id(), OAuthToken::TYPE_BITBUCKET)) {
             return $this->redirectToRoute('organization_package_new', ['organization' => $organization->alias(), 'type' => OAuthToken::TYPE_BITBUCKET]);
         }
-        $this->session->set('organization', $organization->alias());
+        $request->getSession()->set('organization', $organization->alias());
 
         return $this->oauth->getClient('bitbucket')->redirect(['repository', 'webhook'], ['redirect_uri' => $this->generateUrl('package_bitbucket_check', [], UrlGeneratorInterface::ABSOLUTE_URL)]);
     }
@@ -70,9 +69,10 @@ final class BitbucketController extends OAuthController
     /**
      * @Route("/user/token/bitbucket/check", name="package_bitbucket_check", methods={"GET"})
      */
-    public function storeBitbucketRepoToken(): Response
+    public function storeBitbucketRepoToken(Request $request): Response
     {
         return $this->storeRepoToken(
+            $request,
             OAuthToken::TYPE_BITBUCKET,
             function (): AccessToken {
                 return $this->oauth->getClient('bitbucket')->getAccessToken(['redirect_uri' => $this->generateUrl('package_bitbucket_check', [], UrlGeneratorInterface::ABSOLUTE_URL)]);

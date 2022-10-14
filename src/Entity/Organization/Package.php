@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Buddy\Repman\Entity\Organization;
 
 use Buddy\Repman\Entity\Organization;
+use Buddy\Repman\Entity\Organization\Package\Link;
 use Buddy\Repman\Entity\Organization\Package\Version;
+use Buddy\Repman\Entity\User\OAuthToken;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
@@ -75,6 +77,11 @@ class Package
     private ?\DateTimeImmutable $webhookCreatedAt = null;
 
     /**
+     * @ORM\Column(type="string", nullable=true)
+     */
+    private ?string $webhookCreatedError = null;
+
+    /**
      * @ORM\Column(type="text", nullable=true)
      */
     private ?string $lastSyncError = null;
@@ -85,6 +92,11 @@ class Package
      * @var mixed[]
      */
     private array $metadata;
+
+    /**
+     * @ORM\Column(type="text", nullable=true)
+     */
+    private ?string $readme = null;
 
     /**
      * @ORM\Column(type="json", nullable=true)
@@ -110,15 +122,39 @@ class Package
     private Collection $versions;
 
     /**
+     * @var Collection<int,Link>|Link[]
+     * @ORM\OneToMany(targetEntity="Buddy\Repman\Entity\Organization\Package\Link", mappedBy="package", cascade={"persist"}, orphanRemoval=true)
+     */
+    private Collection $links;
+
+    /**
+     * @ORM\Column(type="integer")
+     */
+    private int $keepLastReleases = 0;
+
+    /**
+     * @ORM\Column(type="boolean", options={"default":"true"})
+     */
+    private bool $enableSecurityScan = true;
+
+    /**
+     * @ORM\Column(type="text", nullable=true)
+     */
+    private ?string $replacementPackage = null;
+
+    /**
      * @param mixed[] $metadata
      */
-    public function __construct(UuidInterface $id, string $type, string $url, array $metadata = [])
+    public function __construct(UuidInterface $id, string $type, string $url, array $metadata = [], int $keepLastReleases = 0, bool $enableSecurityScan = true)
     {
         $this->id = $id;
         $this->type = $type;
         $this->repositoryUrl = $url;
         $this->metadata = $metadata;
+        $this->keepLastReleases = $keepLastReleases;
+        $this->enableSecurityScan = $enableSecurityScan;
         $this->versions = new ArrayCollection();
+        $this->links = new ArrayCollection();
     }
 
     public function id(): UuidInterface
@@ -145,18 +181,35 @@ class Package
     }
 
     /**
-     * @param string[] $encounteredVersions
+     * @param array<string,bool> $encounteredVersions
+     * @param array<string,bool> $encounteredLinks
      */
-    public function syncSuccess(string $name, string $description, string $latestReleasedVersion, array $encounteredVersions, \DateTimeImmutable $latestReleaseDate): void
+    public function syncSuccess(string $name, string $description, string $latestReleasedVersion, array $encounteredVersions, array $encounteredLinks, \DateTimeImmutable $latestReleaseDate): void
     {
         $this->setName($name);
         $this->description = $description;
         $this->latestReleasedVersion = $latestReleasedVersion;
         $this->latestReleaseDate = $latestReleaseDate;
-        foreach ($this->versions as $version) {
-            if (!in_array($version->version(), $encounteredVersions, true)) {
-                $this->versions->removeElement($version);
+        foreach ($this->versions as $key => $version) {
+            if (!isset($encounteredVersions[$version->version()])) {
+                $this->versions->remove($key);
             }
+        }
+
+        $uniqueLinks = [];
+        foreach ($this->links as $key => $link) {
+            $uniqueKey = $link->type().'-'.$link->target();
+            if (!isset($encounteredLinks[$uniqueKey])) {
+                $this->links->remove($key);
+                continue;
+            }
+
+            if (!isset($uniqueLinks[$uniqueKey])) {
+                $uniqueLinks[$uniqueKey] = true;
+                continue;
+            }
+
+            $this->links->remove($key);
         }
         $this->lastSyncAt = new \DateTimeImmutable();
         $this->lastSyncError = null;
@@ -193,14 +246,14 @@ class Package
         return $this->isSynchronized() && $this->lastSyncError === null;
     }
 
-    public function oauthToken(): string
+    public function oauthToken(): OAuthToken
     {
         $token = $this->organization->oauthToken(str_replace('-oauth', '', $this->type));
         if ($token === null) {
             throw new \RuntimeException('Oauth token not found');
         }
 
-        return $token->accessToken();
+        return $token;
     }
 
     public function hasOAuthToken(): bool
@@ -211,6 +264,12 @@ class Package
     public function webhookWasCreated(): void
     {
         $this->webhookCreatedAt = new \DateTimeImmutable();
+        $this->webhookCreatedError = null;
+    }
+
+    public function webhookWasNotCreated(string $error): void
+    {
+        $this->webhookCreatedError = substr($error, 0, 255);
     }
 
     public function webhookWasRemoved(): void
@@ -239,6 +298,16 @@ class Package
         }
 
         return $this->metadata[$key];
+    }
+
+    public function readme(): ?string
+    {
+        return $this->readme;
+    }
+
+    public function setReadme(?string $readme): void
+    {
+        $this->readme = $readme;
     }
 
     public function latestReleasedVersion(): ?string
@@ -288,10 +357,60 @@ class Package
     }
 
     /**
+     * @return Collection<int,Link>|Link[]
+     */
+    public function links(): Collection
+    {
+        return $this->links;
+    }
+
+    public function addLink(Link $link): void
+    {
+        $this->links->add($link);
+    }
+
+    public function removeVersion(Version $version): void
+    {
+        $this->versions->removeElement($version);
+    }
+
+    /**
      * @return Version|false
      */
     public function getVersion(string $versionString)
     {
         return $this->versions->filter(fn (Version $version) => $version->version() === $versionString)->first();
+    }
+
+    public function keepLastReleases(): int
+    {
+        return $this->keepLastReleases;
+    }
+
+    public function update(string $url, int $keepLastReleases, bool $enableSecurityScan): void
+    {
+        $this->keepLastReleases = $keepLastReleases;
+        $this->repositoryUrl = $url;
+        $this->enableSecurityScan = $enableSecurityScan;
+    }
+
+    public function getReplacementPackage(): ?string
+    {
+        return $this->replacementPackage;
+    }
+
+    public function setReplacementPackage(?string $replacementPackage): void
+    {
+        $this->replacementPackage = $replacementPackage;
+    }
+
+    public function isEnabledSecurityScan(): bool
+    {
+        return $this->enableSecurityScan;
+    }
+
+    public function setEnabledSecurityScan(bool $enableSecurityScan): void
+    {
+        $this->enableSecurityScan = $enableSecurityScan;
     }
 }

@@ -1,19 +1,42 @@
 {% extends 'base.html.twig' %}
 
-{% block header %}{{ package.name }} details{% endblock %}
-{% block header_btn %}
-    <a href="{{ path('organization_packages', {"organization":organization.alias}) }}" class="btn btn-primary">
-        {% include 'svg/package.svg' %} Package list
+{% block header %}
+    <a href="{{ path('organization_packages', {"organization":organization.alias}) }}"
+       class="btn btn-secondary px-1 mr-1" title="Package List">
+        <span class="text-muted mr-1">&laquo;</span>
+        {% include 'svg/package.svg' %}
     </a>
+
+    {{ package.name }} details
+{% endblock %}
+{% block header_btn %}
+    {% include 'component/packageActions.html.twig' %}
 {% endblock %}
 
 {% block content %}
 
     {% if package.name %}
+        {% if package.isAbandoned %}
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-danger">
+                        {% if package.replacementPackage is not empty %}
+                            This package is <b>abandoned</b> and no longer maintained. The author suggests using the <b>{{ package.replacementPackage }}</b> package instead.
+                        {% else %}
+                            This package is <b>abandoned</b> and no longer maintained. No replacement package was suggested.
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        {% endif %}
         <div class="row">
-            <div class="col-6">
+            <div class="col-3">
                 <h4>Package name</h4>
                 <p>{{ package.name }}</p>
+            </div>
+            <div class="col-3">
+                <h4>Repository URL</h4>
+                <p><a href="{{ package.url }}" target="_blank" rel="nofollow noopener noreferrer">{{ package.url }}</a></p>
             </div>
             <div class="col-6">
                 <h4>Description</h4>
@@ -21,11 +44,60 @@
             </div>
         </div>
 
+        <div class="row">
+            <div class="col-3">
+                <h4>Total Installs</h4>
+                <p>
+                    <a href="{{ path('organization_package_stats', {organization: organization.alias, package: package.id}) }}"
+                       class="number-format">
+                        {{ installs.total }}
+                    </a>
+                </p>
+            </div>
+            <div class="col-3">
+                <h4>Dependant Packages</h4>
+                <p>
+                    <a href="{{ path('organization_packages', {organization: organization.alias, search: "depends:"~package.name}) }}" class="number-format">
+                        {{ dependantCount }}
+                    </a>
+                </p>
+            </div>
+            <div class="col-6">
+                <h4>Security</h4>
+                <p>
+                    {% if package.isEnabledSecurityScan %}
+                    <a
+                            href="{{ path('organization_package_scan_results', {organization: organization.alias, package: package.id}) }}"
+                            data-content="{% apply escape %}{% include 'organization/package/scanResultContent.html.twig' with {'result': package.lastScanResultContent, 'simple': true} %}{% endapply %}"
+                            data-data-toggle="tooltip" title="{{ package.scanResultDate|date_time|time_diff }}"
+                            data-toggle="scan-result-popover"
+                    >
+
+                            {% if package.isScanResultOk %}
+                                <span class="badge badge-success">{{ package.scanResultStatus }}</span>
+                            {% elseif package.isScanResultPending or package.isScanResultNotAvailable %}
+                                <span class="badge badge-warning">{{ package.scanResultStatus }}</span>
+                            {% else %}
+                                <span class="badge badge-danger">{{ package.scanResultStatus }}</span>
+                            {% endif %}
+                    </a>
+                    {% else %}
+                        <span class="badge badge-info">Disabled</span>
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
         {% if package.latestReleaseDate %}
             <div class="row">
                 <div class="col-6">
                     <h4>Latest version</h4>
-                    <p>{{ package.latestReleasedVersion }} (released: <span title="{{ package.latestReleaseDate | date('Y-m-d H:i:s') }}">{{ package.latestReleaseDate | time_diff }}</span>)</p>
+                    <p>
+                        {{ package.latestReleasedVersion }} (released:
+                        <span data-toggle="tooltip"
+                              title="{{ package.latestReleaseDate|date_time_utc }} ({{ gmt_offset() }})">
+                            {{ package.latestReleaseDate|date_time_utc|time_diff }}</span>)
+                    </p>
                 </div>
                 <div class="col-6">
                     <h4>Composer require command</h4>
@@ -33,7 +105,7 @@
                         <div class="input-group col-11">
                             <input id="composer-require" class="form-control" readonly value="composer require {{ package.name }}"/>
                             <span class="input-group-append">
-                        <button data-clipboard-target="#composer-require" class="copy-to-clipboard btn btn-primary p-2" type="button" data-toggle="tooltip" data-placement="top" data-content="Copy composer require command">
+                        <button data-clipboard-target="#composer-require" class="copy-to-clipboard btn btn-primary p-2" type="button" data-toggle="tooltip" data-placement="top" title="Copy to clipboard">
                             {% include 'svg/clipboard.svg' %}
                         </button>
                     </span>
@@ -45,7 +117,7 @@
 
         <hr />
 
-        <h3>Available versions</h3>
+        <h3>Available versions {% if package.keepLastReleases > 0 %}(limited to: {{ package.keepLastReleases }}){% endif %}</h3>
 
         {% if count == 0 %}
             <p>
@@ -75,7 +147,9 @@
                     <tr>
                         <td>{{ version.version }}</td>
                         <td>
-                            <span title="{{ version.date | date('Y-m-d H:i:s') }}">{{ version.date | time_diff }}</span>
+                            <span data-toggle="tooltip" title="{{ version.date|date_time_utc }} ({{ gmt_offset() }})">
+                                {{ version.date|date_time_utc|time_diff }}
+                            </span>
                         </td>
                         <td>{{ version.reference }}</td>
                         <td>{{ version.size | format_bytes }}</td>
@@ -84,7 +158,7 @@
                                 <input id="version-{{ version.reference }}" class="form-control" readonly value="composer require {{ package.name }}:{{ version.version }}"/>
                                 <span class="input-group-append">
                             <button data-clipboard-target="#version-{{ version.reference }}" class="copy-to-clipboard btn btn-primary p-2" type="button" data-toggle="tooltip" data-placement="top"
-                                    data-content="Copy composer require command for version to clipboard">
+                                    title="Copy to clipboard">
                                 {% include 'svg/clipboard.svg' %}
                             </button>
                         </span>
@@ -99,6 +173,54 @@
     {% else %}
         <div class="alert alert-warning">
             This package is not synced yet!
+        </div>
+    {% endif %}
+
+    {% if packageLinks|length > 0 %}
+        <hr />
+
+        <div class="row">
+            {% set types = {
+                'requires': 'Requirements',
+                'devRequires': 'Dev Requirements',
+                'suggests': 'Suggestions',
+                'provides': 'Provides',
+                'conflicts': 'Conflicts',
+                'replaces': 'Replaces',
+            } %}
+
+            {% for type,label in types %}
+                <div class="col-4">
+                    <h4>{{ label }}</h4>
+                    {% if packageLinks[type] is defined and packageLinks[type]|length > 0 %}
+                        <ul>
+                            {% for link in packageLinks[type] %}
+                                <li>
+                                    {% if link.targetPackageId %}
+                                        <a href="{{ path('organization_package_details', {organization: organization.alias, package: link.targetPackageId}) }}">{{ link.target }}</a>: {{ link.constraint }}
+                                    {% else %}
+                                        {{ link.target }}: {{ link.constraint }}
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <em>None</em>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if package.readme() %}
+        <hr />
+
+        <h3>README</h3>
+
+        <div class="row">
+            <div class="col">
+                {{ package.readme()|raw }}
+            </div>
         </div>
     {% endif %}
 

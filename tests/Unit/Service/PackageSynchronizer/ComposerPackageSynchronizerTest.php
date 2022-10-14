@@ -4,18 +4,20 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Tests\Unit\Service\PackageSynchronizer;
 
+use Buddy\Repman\Entity\Organization\Package\Link;
 use Buddy\Repman\Entity\Organization\Package\Version;
 use Buddy\Repman\Repository\PackageRepository;
-use Buddy\Repman\Service\Dist\Storage\FileStorage;
-use Buddy\Repman\Service\Dist\Storage\InMemoryStorage;
+use Buddy\Repman\Service\Dist\Storage;
 use Buddy\Repman\Service\Organization\PackageManager;
 use Buddy\Repman\Service\PackageNormalizer;
 use Buddy\Repman\Service\PackageSynchronizer\ComposerPackageSynchronizer;
+use Buddy\Repman\Service\User\UserOAuthTokenRefresher;
 use Buddy\Repman\Tests\Doubles\FakeDownloader;
 use Buddy\Repman\Tests\MotherObject\PackageMother;
+use League\Flysystem\Adapter\Local;
+use League\Flysystem\Filesystem;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\Filesystem\Filesystem;
 
 final class ComposerPackageSynchronizerTest extends TestCase
 {
@@ -24,18 +26,23 @@ final class ComposerPackageSynchronizerTest extends TestCase
     private $repoMock;
     private string $baseDir;
     private string $resourcesDir;
+    private FakeDownloader $downloader;
 
     protected function setUp(): void
     {
         $this->baseDir = sys_get_temp_dir().'/repman';
+        $repoFilesystem = new Filesystem(new Local($this->baseDir));
+        $this->downloader = new FakeDownloader();
+        $distStorage = new Storage($this->downloader, $repoFilesystem);
         $this->synchronizer = new ComposerPackageSynchronizer(
-            new PackageManager(new FileStorage($this->baseDir, new FakeDownloader()), $this->baseDir, new Filesystem()),
+            new PackageManager($distStorage, $repoFilesystem),
             new PackageNormalizer(),
             $this->repoMock = $this->createMock(PackageRepository::class),
-            new InMemoryStorage(),
+            $distStorage,
+            $this->createMock(UserOAuthTokenRefresher::class),
             'gitlab.com'
         );
-        $this->resourcesDir = __DIR__.'/../../../Resources/';
+        $this->resourcesDir = dirname(__DIR__, 3).'/Resources/';
     }
 
     public function testSynchronizePackageFromLocalPath(): void
@@ -43,7 +50,10 @@ final class ComposerPackageSynchronizerTest extends TestCase
         $path = $this->baseDir.'/buddy/p/repman-io/repman.json';
         @unlink($path);
 
-        $package = PackageMother::withOrganization('path', __DIR__.'/../../../../', 'buddy');
+        $basePath = dirname(__DIR__, 4);
+        $this->downloader->addContent($basePath, 'foobar');
+
+        $package = PackageMother::withOrganization('path', $basePath, 'buddy');
         $this->synchronizer->synchronize($package);
 
         self::assertFileExists($path);
@@ -67,6 +77,7 @@ final class ComposerPackageSynchronizerTest extends TestCase
         $path = $this->baseDir.'/buddy/p/buddy-works/alpha.json';
         @unlink($path);
 
+        $this->downloader->addContent($this->resourcesDir.'artifacts', 'foobar');
         $package = PackageMother::withOrganization('artifact', $this->resourcesDir.'artifacts', 'buddy');
         $this->synchronizer->synchronize($package);
 
@@ -82,6 +93,22 @@ final class ComposerPackageSynchronizerTest extends TestCase
         }, $package->versions()->toArray());
         sort($versionStrings, SORT_NATURAL);
         self::assertEquals(['1.0.0', '1.1.0', '1.1.1', '1.2.0'], $versionStrings);
+
+        /** @var Link[] $links */
+        $links = $package->links()->toArray();
+        self::assertCount(6, $links);
+
+        $linkStrings = array_map(
+            fn (Link $link): string => $link->type().'-'.$link->target().'-'.$link->constraint(),
+            $links
+        );
+
+        self::assertContains('requires-php-^7.4.1', $linkStrings);
+        self::assertContains('devRequires-buddy-works/dev-^1.0', $linkStrings);
+        self::assertContains('provides-buddy-works/provide-^1.0', $linkStrings);
+        self::assertContains('replaces-buddy-works/replace-^1.0', $linkStrings);
+        self::assertContains('conflicts-buddy-works/conflict-^1.0', $linkStrings);
+        self::assertContains('suggests-buddy-works/suggests-You really should', $linkStrings);
     }
 
     public function testSynchronizePackageThatAlreadyExists(): void
@@ -92,7 +119,7 @@ final class ComposerPackageSynchronizerTest extends TestCase
 
         $this->synchronizer->synchronize(PackageMother::withOrganization('artifact', $this->resourcesDir.'artifacts', 'buddy'));
 
-        self::assertFileNotExists($path);
+        self::assertFileDoesNotExist($path);
     }
 
     public function testSynchronizePackageWithGitLabToken(): void
@@ -167,9 +194,77 @@ final class ComposerPackageSynchronizerTest extends TestCase
 
         $package = PackageMother::withOrganization('path', dirname($tmpPath), 'buddy');
 
+        /* @phpstan-ignore-next-line */
+        $this->downloader->addContent(dirname($tmpPath), file_get_contents($tmpPath));
         $this->synchronizer->synchronize($package);
 
         self::assertEquals('no stable release', $this->getProperty($package, 'latestReleasedVersion'));
+        @unlink($this->baseDir.'/buddy/p/some/package.json');
+        @unlink($tmpPath);
+    }
+
+    public function testSynchronizePackageWithLimitedNumberOfVersions(): void
+    {
+        $path = $this->baseDir.'/buddy/p/buddy-works/alpha.json';
+        @unlink($path);
+
+        $limit = 2;
+
+        $package = PackageMother::withOrganization('artifact', $this->resourcesDir.'artifacts', 'buddy', $limit);
+        $this->synchronizer->synchronize($package);
+
+        self::assertFileExists($path);
+
+        $json = unserialize((string) file_get_contents($path));
+        self::assertCount(4, $json['packages']['buddy-works/alpha']);
+        @unlink($path);
+
+        self::assertCount($limit, $package->versions());
+        $versionStrings = array_map(function (Version $version): string {
+            return $version->version();
+        }, $package->versions()->toArray());
+        sort($versionStrings, SORT_NATURAL);
+        self::assertEquals(['1.1.1', '1.2.0'], $versionStrings);
+    }
+
+    public function testSynchronizePackageAbandonedWithReplacementPackage(): void
+    {
+        // prepare package in path without git
+        $resPath = $this->resourcesDir.'path/abandoned-replacement-package/composer.json';
+        $tmpPath = sys_get_temp_dir().'/repman/path/abandoned-replacement-package/composer.json';
+        if (!is_dir(dirname($tmpPath))) {
+            mkdir(dirname($tmpPath), 0777, true);
+        }
+        copy($resPath, $tmpPath);
+
+        $package = PackageMother::withOrganization('path', dirname($tmpPath), 'buddy');
+
+        /* @phpstan-ignore-next-line */
+        $this->downloader->addContent(dirname($tmpPath), file_get_contents($tmpPath));
+        $this->synchronizer->synchronize($package);
+
+        self::assertEquals('foo/bar', $this->getProperty($package, 'replacementPackage'));
+        @unlink($this->baseDir.'/buddy/p/some/package.json');
+        @unlink($tmpPath);
+    }
+
+    public function testSynchronizePackageAbandonedWithoutReplacementPackage(): void
+    {
+        // prepare package in path without git
+        $resPath = $this->resourcesDir.'path/abandoned-without-replacement-package/composer.json';
+        $tmpPath = sys_get_temp_dir().'/repman/path/abandoned-without-replacement-package/composer.json';
+        if (!is_dir(dirname($tmpPath))) {
+            mkdir(dirname($tmpPath), 0777, true);
+        }
+        copy($resPath, $tmpPath);
+
+        $package = PackageMother::withOrganization('path', dirname($tmpPath), 'buddy');
+
+        /* @phpstan-ignore-next-line */
+        $this->downloader->addContent(dirname($tmpPath), file_get_contents($tmpPath));
+        $this->synchronizer->synchronize($package);
+
+        self::assertEquals('', $this->getProperty($package, 'replacementPackage'));
         @unlink($this->baseDir.'/buddy/p/some/package.json');
         @unlink($tmpPath);
     }

@@ -6,6 +6,8 @@ namespace Buddy\Repman\Query\User\Model;
 
 final class Package
 {
+    use PackageScanResultTrait;
+
     private string $id;
     private string $organizationId;
     private string $type;
@@ -17,7 +19,9 @@ final class Package
     private ?\DateTimeImmutable $lastSyncAt;
     private ?string $lastSyncError;
     private ?\DateTimeImmutable $webhookCreatedAt;
-    private ?ScanResult $scanResult;
+    private ?string $webhookCreatedError;
+    private int $keepLastReleases;
+    private bool $enableSecurityScan;
 
     public function __construct(
         string $id,
@@ -31,7 +35,10 @@ final class Package
         ?\DateTimeImmutable $lastSyncAt = null,
         ?string $lastSyncError = null,
         ?\DateTimeImmutable $webhookCreatedAt = null,
-        ?ScanResult $scanResult = null
+        ?string $webhookCreatedError = null,
+        ?ScanResult $scanResult = null,
+        int $keepLastReleases = 0,
+        bool $enableSecurityScan = true
     ) {
         $this->id = $id;
         $this->organizationId = $organizationId;
@@ -44,7 +51,10 @@ final class Package
         $this->lastSyncAt = $lastSyncAt;
         $this->lastSyncError = $lastSyncError;
         $this->webhookCreatedAt = $webhookCreatedAt;
+        $this->webhookCreatedError = $webhookCreatedError;
         $this->scanResult = $scanResult ?? null;
+        $this->keepLastReleases = $keepLastReleases;
+        $this->enableSecurityScan = $enableSecurityScan;
     }
 
     public function id(): string
@@ -102,6 +112,11 @@ final class Package
         return $this->webhookCreatedAt;
     }
 
+    public function webhookCreatedError(): ?string
+    {
+        return $this->webhookCreatedError;
+    }
+
     public function allowToAutoAddWebhook(): bool
     {
         return in_array($this->type, ['github-oauth', 'gitlab-oauth', 'bitbucket-oauth'], true);
@@ -112,36 +127,13 @@ final class Package
         return $this->name() !== null && $this->lastSyncError() === null;
     }
 
-    public function scanResultStatus(): string
+    public function keepLastReleases(): int
     {
-        return $this->scanResult !== null ? $this->scanResult->status() : ScanResult::statusPending();
+        return $this->keepLastReleases;
     }
 
-    public function scanResultDate(): ?\DateTimeImmutable
+    public function isEnabledSecurityScan(): bool
     {
-        return $this->scanResult !== null ? $this->scanResult->date() : null;
-    }
-
-    public function isScanResultOk(): ?bool
-    {
-        return $this->scanResult !== null ? $this->scanResult->isOk() : false;
-    }
-
-    public function isScanResultPending(): bool
-    {
-        return $this->scanResult !== null ? $this->scanResult->isPending() : true;
-    }
-
-    public function isScanResultNotAvailable(): bool
-    {
-        return $this->scanResult !== null ? $this->scanResult->isNotAvailable() : true;
-    }
-
-    /**
-     * @return mixed[]
-     */
-    public function lastScanResultContent(): array
-    {
-        return $this->scanResult !== null ? $this->scanResult->content() : [];
+        return $this->enableSecurityScan;
     }
 }

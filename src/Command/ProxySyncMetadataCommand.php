@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Command;
 
-use Buddy\Repman\Service\Downloader;
 use Buddy\Repman\Service\Proxy;
 use Buddy\Repman\Service\Proxy\ProxyRegister;
 use Symfony\Component\Console\Command\Command;
@@ -17,14 +16,14 @@ final class ProxySyncMetadataCommand extends Command
     public const LOCK_TTL = 60;
     public const LOCK_NAME = 'proxy_metadata';
 
+    protected static $defaultName = 'repman:proxy:sync-metadata';
+
     private ProxyRegister $register;
-    private Downloader $downloader;
     private LockFactory $lockFactory;
 
-    public function __construct(ProxyRegister $register, Downloader $downloader, LockFactory $lockFactory)
+    public function __construct(ProxyRegister $register, LockFactory $lockFactory)
     {
         $this->register = $register;
-        $this->downloader = $downloader;
         $this->lockFactory = $lockFactory;
 
         parent::__construct();
@@ -36,12 +35,11 @@ final class ProxySyncMetadataCommand extends Command
     protected function configure()
     {
         $this
-            ->setName('repman:proxy:sync-metadata')
             ->setDescription('Sync proxy metadata with origins')
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $lock = $this->lockFactory->createLock(self::LOCK_NAME, self::LOCK_TTL);
         if (!$lock->acquire()) {
@@ -51,6 +49,8 @@ final class ProxySyncMetadataCommand extends Command
         try {
             $this->register->all()->forEach(function (Proxy $proxy) use ($lock): void {
                 $proxy->syncMetadata();
+                $lock->refresh();
+                $proxy->updateLatestProviders();
                 $lock->refresh();
             });
         } finally {

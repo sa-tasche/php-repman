@@ -4,19 +4,21 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Tests\Doubles;
 
-use Buddy\Repman\Service\BitbucketApi;
-use Buddy\Repman\Service\BitbucketApi\Repositories;
+use Buddy\Repman\Service\Integration\BitbucketApi;
+use Buddy\Repman\Service\Integration\BitbucketApi\Repositories;
 
 final class FakeBitbucketApi implements BitbucketApi
 {
     private string $primaryEmail = '';
     private ?\Throwable $exception = null;
+    /**
+     * @var string[]
+     */
+    private array $removedWebhooks = [];
 
     public function primaryEmail(string $accessToken): string
     {
-        if ($this->exception !== null) {
-            throw $this->exception;
-        }
+        $this->throwExceptionIfSet();
 
         return $this->primaryEmail;
     }
@@ -33,9 +35,7 @@ final class FakeBitbucketApi implements BitbucketApi
 
     public function repositories(string $accessToken): Repositories
     {
-        if ($this->exception !== null) {
-            throw $this->exception;
-        }
+        $this->throwExceptionIfSet();
 
         return new Repositories([
             new BitbucketApi\Repository('{0f6dc6fe-f8ab-4a53-bb63-03042b80056f}', 'buddy-works/repman', 'https://bitbucket.org/buddy-works/repman.git'),
@@ -44,11 +44,27 @@ final class FakeBitbucketApi implements BitbucketApi
 
     public function addHook(string $accessToken, string $fullName, string $hookUrl): void
     {
-        // TODO: Implement addHook() method.
+        $this->throwExceptionIfSet();
     }
 
     public function removeHook(string $accessToken, string $fullName, string $hookUrl): void
     {
-        // TODO: Implement removeHook() method.
+        $this->throwExceptionIfSet();
+        $this->removedWebhooks[] = $fullName;
+    }
+
+    /**
+     * @return string[]
+     */
+    public function removedWebhooks(): array
+    {
+        return $this->removedWebhooks;
+    }
+
+    private function throwExceptionIfSet(): void
+    {
+        if ($this->exception !== null) {
+            throw $this->exception;
+        }
     }
 }

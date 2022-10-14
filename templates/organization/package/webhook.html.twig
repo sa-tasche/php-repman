@@ -1,10 +1,17 @@
 {% extends 'base.html.twig' %}
 
-{% block header %}Package: {{ package.name }} webhook{% endblock %}
-{% block header_btn %}
-    <a href="{{ path('organization_packages', {"organization":organization.alias}) }}" class="btn btn-primary">
-        {% include 'svg/package.svg' %} Package list
+{% block header %}
+    <a href="{{ path('organization_packages', {"organization":organization.alias}) }}"
+       class="btn btn-secondary px-1 mr-1" title="Package List">
+        <span class="text-muted mr-1">&laquo;</span>
+        {% include 'svg/package.svg' %}
     </a>
+
+    <a href="{{ path('organization_package_details', {organization: organization.alias, package: package.id}) }}">{{ package.name }}</a>
+    webhook
+{% endblock %}
+{% block header_btn %}
+    {% include 'component/packageActions.html.twig' %}
 {% endblock %}
 
 {% block content %}
@@ -18,7 +25,10 @@
         <strong>Webhook status</strong>:
         {% if package.allowToAutoAddWebhook %}
             {% if package.webhookCreatedAt is not null %}
-                {% include 'svg/check.svg' %} created at {{ package.webhookCreatedAt | date('Y-m-d H:i:s') }}
+                {% include 'svg/check.svg' %} created
+                <span data-toggle="tooltip" title="{{ package.webhookCreatedAt|date_time }} {{ gmt_offset() }}">
+                    {{ package.webhookCreatedAt|date_time|time_diff }}
+                </span>
             {% else %}
                 not added
             {% endif %}
@@ -29,6 +39,12 @@
                     data-action="{{ path('organization_package_webhook', {organization: organization.alias, package: package.id }) }}"
                     data-method="POST"
             >Synchronize webhook</a>
+            {% if package.webhookCreatedError is not null %}
+                <div class="alert alert-danger small">
+                    The following error occurred while adding a webhook:<br />
+                    {{ package.webhookCreatedError }}
+                </div>
+            {% endif %}
         {% else %}
             unable to automatically add a webhook, please add it manually
         {% endif %}
@@ -42,7 +58,7 @@
         <div class="input-group col-6">
             <input id="webhook" type="text" class="form-control" readonly value="{{ url('package_webhook', {package: package.id}) }}" />
             <span class="input-group-append">
-                <button data-clipboard-target="#webhook" class="copy-to-clipboard btn btn-primary p-2" type="button" title="Copy to clipboard">
+                <button data-clipboard-target="#webhook" class="copy-to-clipboard btn btn-primary p-2" type="button" title="Copy to clipboard" data-toggle="tooltip">
                     {% include 'svg/clipboard.svg' %}
                 </button>
             </span>
@@ -70,7 +86,11 @@
             <tbody>
             {% for request in recentRequests %}
                 <tr>
-                    <td>{{ request.date }}</td>
+                    <td>
+                        <span data-toggle="tooltip" title="{{ request.date|date_time }} {{ gmt_offset() }}">
+                            {{ request.date|date_time|time_diff }}
+                        </span>
+                    </td>
                     <td>{{ request.ip | default('n/a') }}</td>
                     <td>{{ request.userAgent | default('n/a') }}</td>
                 </tr>

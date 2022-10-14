@@ -18,9 +18,9 @@ final class FakeDownloader implements Downloader
      */
     private array $content = [];
 
-    public function __construct()
+    public function __construct(string $basePath = __DIR__.'/../Resources')
     {
-        $this->basePath = __DIR__.'/../Resources';
+        $this->basePath = $basePath;
     }
 
     /**
@@ -38,6 +38,10 @@ final class FakeDownloader implements Downloader
 
         if (file_exists($path)) {
             return Option::some(Stream::fromString((string) file_get_contents($path)));
+        }
+
+        if (file_exists($url)) {
+            return Option::some(Stream::fromString((string) file_get_contents($url)));
         }
 
         if (strstr($path, 'not-found') !== false && $notFoundHandler !== null) {

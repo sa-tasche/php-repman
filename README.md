@@ -16,6 +16,8 @@
 - hosts your private packages
 - allows to create individual access tokens
 - supports private package import from **GitHub**, **GitLab** and **Bitbucket** with one click
+- REST API
+- security scanner (with e-mail reports)
 
 Documentation: [https://repman.io/docs/](https://repman.io/docs/)
 
@@ -46,7 +48,8 @@ composer install
 
 Setup database:
 ```
-bin/console doctrine:migrations:migrate
+bin/console doctrine:migrations:migrate #for postgres
+bin/console doctrine:schema:create #for sqlite init as migrations are only postgres-compatible
 bin/console messenger:setup-transports
 ```
 
@@ -103,6 +106,7 @@ symfony proxy:domain:attach your-organization.repman
 - `bin/console repman:security:scan-all` - scan all synchronized packages
 - `bin/console repman:security:update-db` - update security advisories database, scan all packages if updated
 - `bin/console repman:package:synchronize <packageId>` - synchronize given package
+- `bin/console repman:package:clear-old-dists` - clear old private dev distributions files
 
 ## API Integration
 
@@ -157,6 +161,28 @@ To start all containers run:
 ```bash
 docker-compose up
 ```
+
+## Support
+
+In case of any problems, you can use:
+
+ - Our documentation: [repman.io/docs](https://repman.io/docs/) - it is also open sourced [github.com/repman-io/repman-docs-pages](https://github.com/repman-io/repman-docs-pages)
+ - GitHub issue list: [github.com/repman-io/repman/issues](https://github.com/repman-io/repman/issues) - feel free to create a new issue there
+ - E-mail: contact [at] repman.io
+
+## License
+
+The Repman project is licensed under the terms of the [MIT](LICENSE).
+
+However, Repman includes several third-party Open-Source libraries, which are licensed under their own respective Open-Source licenses.
+
+#### Libraries or projects directly included in Repman
+
+ - Tabler:  [MIT](https://github.com/tabler/tabler/blob/master/LICENSE)
+ - Feather: [MIT](https://github.com/feathericons/feather/blob/master/LICENSE)
+ - Lucide: License: [ISC](https://github.com/lucide-icons/lucide/blob/master/LICENSE)
+ - Postmark Transactional Email Templates: [MIT](https://github.com/wildbit/postmark-templates/blob/master/LICENSE)
+ - Libraries dynamically referenced via Composer: run `composer license` to get the latest licensing info about all dependencies.
 
 ---
 

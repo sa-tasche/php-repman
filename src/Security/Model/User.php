@@ -7,9 +7,10 @@ namespace Buddy\Repman\Security\Model;
 use Buddy\Repman\Security\Model\User\Organization;
 use Munus\Control\Option;
 use Symfony\Component\Security\Core\User\EquatableInterface;
+use Symfony\Component\Security\Core\User\PasswordAuthenticatedUserInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
 
-final class User implements UserInterface, EquatableInterface
+final class User implements UserInterface, EquatableInterface, PasswordAuthenticatedUserInterface
 {
     private string $id;
     private string $email;
@@ -18,6 +19,7 @@ final class User implements UserInterface, EquatableInterface
     private bool $emailConfirmed;
     private string $emailConfirmToken;
     private bool $emailScanResult;
+    private string $timezone;
 
     /**
      * @var string[]
@@ -33,7 +35,7 @@ final class User implements UserInterface, EquatableInterface
      * @param string[]       $roles
      * @param Organization[] $organizations
      */
-    public function __construct(string $id, string $email, string $password, string $status, bool $emailConfirmed, string $emailConfirmToken, $roles, $organizations, bool $emailScanResult)
+    public function __construct(string $id, string $email, string $password, string $status, bool $emailConfirmed, string $emailConfirmToken, $roles, $organizations, bool $emailScanResult, string $timezone)
     {
         $this->id = $id;
         $this->email = $email;
@@ -44,6 +46,7 @@ final class User implements UserInterface, EquatableInterface
         $this->roles = $roles;
         $this->organizations = $organizations;
         $this->emailScanResult = $emailScanResult;
+        $this->timezone = $timezone;
     }
 
     public function id(): string
@@ -126,6 +129,11 @@ final class User implements UserInterface, EquatableInterface
         return $this->email;
     }
 
+    public function getUserIdentifier(): string
+    {
+        return $this->email;
+    }
+
     public function eraseCredentials(): void
     {
         // If you store any temporary, sensitive data on the user, clear it here
@@ -138,7 +146,7 @@ final class User implements UserInterface, EquatableInterface
             return false;
         }
 
-        if ($this->getUsername() !== $user->getUsername()) {
+        if ($this->getUserIdentifier() !== $user->getUserIdentifier()) {
             return false;
         }
 
@@ -152,5 +160,21 @@ final class User implements UserInterface, EquatableInterface
     public function emailScanResult(): bool
     {
         return $this->emailScanResult;
+    }
+
+    public function timezone(): string
+    {
+        return $this->timezone;
+    }
+
+    public function isMemberOfOrganization(string $organizationAlias): bool
+    {
+        foreach ($this->organizations as $organization) {
+            if ($organization->alias() === $organizationAlias) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

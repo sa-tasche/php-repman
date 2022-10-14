@@ -11,10 +11,12 @@ use Buddy\Repman\Query\User\PackageQuery;
 use Buddy\Repman\Service\Organization\PackageManager;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Cache;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use Symfony\Component\Routing\RouterInterface;
@@ -23,21 +25,30 @@ final class RepoController extends AbstractController
 {
     private PackageQuery $packageQuery;
     private PackageManager $packageManager;
+    private MessageBusInterface $messageBus;
 
-    public function __construct(PackageQuery $packageQuery, PackageManager $packageManager)
-    {
+    public function __construct(
+        PackageQuery $packageQuery,
+        PackageManager $packageManager,
+        MessageBusInterface $messageBus
+    ) {
         $this->packageQuery = $packageQuery;
         $this->packageManager = $packageManager;
+        $this->messageBus = $messageBus;
     }
 
     /**
-     * @Route("/packages.json", host="{organization}.repo.{domain}", name="repo_packages", methods={"GET"}, defaults={"domain":"%domain%"}, requirements={"domain"="%domain%"})
+     * @Route("/packages.json", host="{organization}{sep1}repo{sep2}{domain}", name="repo_packages", methods={"GET"}, defaults={"domain":"%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"}, requirements={"domain"="%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"})
      * @Cache(public=false)
      */
-    public function packages(Organization $organization): JsonResponse
+    public function packages(Request $request, Organization $organization): JsonResponse
     {
-        return new JsonResponse([
-            'packages' => $this->packageManager->findProviders($organization->alias(), $this->packageQuery->getAllNames($organization->id())),
+        $packageNames = $this->packageQuery->getAllNames($organization->id());
+        [$lastModified, $packages] = $this->packageManager->findProviders($organization->alias(), $packageNames);
+
+        $response = (new JsonResponse([
+            'packages' => $packages,
+            'available-packages' => array_map(static fn (PackageName $packageName) => $packageName->name(), $packageNames),
             'metadata-url' => '/p2/%package%.json',
             'notify-batch' => $this->generateUrl('repo_package_downloads', [
                 'organization' => $organization->alias(),
@@ -53,32 +64,50 @@ final class RepoController extends AbstractController
                     'preferred' => true,
                 ],
             ],
-        ]);
+        ]))
+        ->setPrivate()
+        ->setLastModified($lastModified);
+
+        $response->isNotModified($request);
+
+        return $response;
     }
 
     /**
      * @Route("/dists/{package}/{version}/{ref}.{type}",
      *     name="repo_package_dist",
-     *     host="{organization}.repo.{domain}",
-     *     defaults={"domain":"%domain%"},
-     *     requirements={"package"="%package_name_pattern%","ref"="[a-f0-9]*?","type"="zip|tar","domain"="%domain%"},
+     *     host="{organization}{sep1}repo{sep2}{domain}",
+     *     defaults={"domain":"%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"},
+     *     requirements={"package"="%package_name_pattern%","ref"="[a-f0-9]*?","type"="zip|tar","domain"="%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"},
      *     methods={"GET"})
      * @Cache(public=false)
      */
-    public function distribution(Organization $organization, string $package, string $version, string $ref, string $type): BinaryFileResponse
+    public function distribution(Organization $organization, string $package, string $version, string $ref, string $type): StreamedResponse
     {
-        return new BinaryFileResponse($this->packageManager
+        $filename = $this->packageManager
             ->distFilename($organization->alias(), $package, $version, $ref, $type)
-            ->getOrElseThrow(new NotFoundHttpException('This distribution file can not be found or downloaded from origin url.'))
-        );
+            ->getOrElseThrow(new NotFoundHttpException('This distribution file can not be found or downloaded from origin url.'));
+
+        return new StreamedResponse(function () use ($filename): void {
+            $outputStream = \fopen('php://output', 'wb');
+            if (false === $outputStream) {
+                throw new HttpException(500, 'Could not open output stream to send binary file.'); // @codeCoverageIgnore
+            }
+            $fileStream = $this->packageManager->getDistFileReference($filename);
+            \stream_copy_to_stream(
+                $fileStream
+                    ->getOrElseThrow(new NotFoundHttpException('This distribution file can not be found or downloaded from origin url.')),
+                $outputStream
+            );
+        });
     }
 
     /**
      * @Route("/downloads",
      *     name="repo_package_downloads",
-     *     host="{organization}.repo.{domain}",
-     *     defaults={"domain":"%domain%"},
-     *     requirements={"domain"="%domain%"},
+     *     host="{organization}{sep1}repo{sep2}{domain}",
+     *     defaults={"domain":"%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"},
+     *     requirements={"domain"="%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"},
      *     methods={"POST"})
      */
     public function downloads(Request $request, Organization $organization): JsonResponse
@@ -98,7 +127,7 @@ final class RepoController extends AbstractController
             }
 
             if (isset($packageMap[$package['name']])) {
-                $this->dispatchMessage(new AddDownload(
+                $this->messageBus->dispatch(new AddDownload(
                     $packageMap[$package['name']],
                     $package['version'],
                     new \DateTimeImmutable(),
@@ -113,21 +142,31 @@ final class RepoController extends AbstractController
 
     /**
      * @Route("/p2/{package}.json",
-     *      host="{organization}.repo.{domain}",
+     *      host="{organization}{sep1}repo{sep2}{domain}",
      *      name="repo_package_provider_v2",
      *      methods={"GET"},
-     *      defaults={"domain":"%domain%"},
-     *      requirements={"domain"="%domain%","package"="%package_name_pattern%"})
+     *      defaults={"domain":"%domain%","sep1"="%organization_separator%","sep2"="%domain_separator%"},
+     *      requirements={"domain"="%domain%","package"="%package_name_pattern%","sep1"="%organization_separator%","sep2"="%domain_separator%"})
      * @Cache(public=false)
      */
-    public function providerV2(Organization $organization, string $package): JsonResponse
+    public function providerV2(Request $request, Organization $organization, string $package): JsonResponse
     {
-        $providerData = $this->packageManager->findProviders(
+        [$lastModified, $providerData] = $this->packageManager->findProviders(
             $organization->alias(),
             [new PackageName('', $package)]
         );
 
-        return new JsonResponse($providerData === [] ? new \stdClass() : $providerData);
+        if ($providerData === []) {
+            throw new NotFoundHttpException();
+        }
+
+        $response = (new JsonResponse($providerData))
+            ->setLastModified($lastModified)
+            ->setPrivate();
+
+        $response->isNotModified($request);
+
+        return $response;
     }
 
     /**

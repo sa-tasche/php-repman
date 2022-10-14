@@ -6,23 +6,30 @@ namespace Buddy\Repman\Controller\Admin;
 
 use Buddy\Repman\Message\Proxy\RemoveDist;
 use Buddy\Repman\Query\Admin\Proxy\DownloadsQuery;
+use Buddy\Repman\Query\Filter;
 use Buddy\Repman\Service\Proxy;
 use Buddy\Repman\Service\Proxy\ProxyRegister;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Routing\Annotation\Route;
 
 final class ProxyController extends AbstractController
 {
     private ProxyRegister $register;
     private DownloadsQuery $downloadsQuery;
+    private MessageBusInterface $messageBus;
 
-    public function __construct(ProxyRegister $register, DownloadsQuery $downloadsQuery)
-    {
+    public function __construct(
+        ProxyRegister $register,
+        DownloadsQuery $downloadsQuery,
+        MessageBusInterface $messageBus
+    ) {
         $this->register = $register;
         $this->downloadsQuery = $downloadsQuery;
+        $this->messageBus = $messageBus;
     }
 
     /**
@@ -30,15 +37,18 @@ final class ProxyController extends AbstractController
      */
     public function list(string $proxy, Request $request): Response
     {
+        $filter = Filter::fromRequest($request);
+
         $packages = $this->register->getByHost($proxy)->syncedPackages();
         $count = $packages->length();
-        $packages = $packages->drop((int) $request->get('offset', 0))->take(20)->iterator()->toArray();
+        $packages = $packages->drop($filter->getOffset())->take($filter->getLimit())->iterator()->toArray();
 
         return $this->render('admin/proxy/dist.html.twig', [
             'proxy' => $proxy,
             'packages' => $packages,
             'downloads' => $this->downloadsQuery->findByNames($packages),
             'count' => $count,
+            'filter' => $filter,
         ]);
     }
 
@@ -60,7 +70,7 @@ final class ProxyController extends AbstractController
      */
     public function remove(string $proxy, string $packageName): Response
     {
-        $this->dispatchMessage(new RemoveDist($proxy, $packageName));
+        $this->messageBus->dispatch(new RemoveDist($proxy, $packageName));
 
         $this->addFlash('success', sprintf('Dist files for package %s will be removed.', $packageName));
 

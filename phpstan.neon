@@ -1,8 +1,12 @@
 includes:
 	- vendor/phpstan/phpstan/conf/bleedingEdge.neon
 parameters:
-    excludes_analyse:
-        - src/Entity/Organization.php
+    level: max
+    reportMaybesInPropertyPhpDocTypes: false
+    checkExplicitMixed: false
+    paths:
+        - src
+        - tests
     ignoreErrors:
         -
             message: "#^Strict comparison using \\!\\=\\= between string and null will always evaluate to true\\.$#"
@@ -10,12 +14,12 @@ parameters:
             path: src/Service/PackageSynchronizer/ComposerPackageSynchronizer.php
 
         -
-            message: "#^Variable property access on DateInterval\\.$#"
+            message: "#^Variable method call on Composer\\\\Package\\\\PackageInterface\\.$#"
             count: 1
-            path: src/Service/Twig/DateExtension.php
+            path: src/Service/PackageSynchronizer/ComposerPackageSynchronizer.php
 
         -
-            message: "#^Only booleans are allowed in a ternary operator condition, int given\\.$#"
+            message: "#^Variable property access on DateInterval\\.$#"
             count: 1
             path: src/Service/Twig/DateExtension.php
         -
@@ -26,6 +30,35 @@ parameters:
             message: "#^Variable \\$http_response_header in isset\\(\\) always exists and is not nullable\\.$#"
             count: 1
             path: src/Service/Downloader/ReactDownloader.php
+        -
+            message: "#^Property .+ is never read, only written\\.$#"
+            path: src/Entity/
+        -
+            message: "#^Property .+\\:\\:\\$key is unused\\.$#"
+            count: 1
+            path: src/Entity/Config.php
+        -
+            message: "#^Variable method call on React\\\\Http\\\\Browser\\.$#"
+            count: 1
+            path: src/Service/Downloader/ReactDownloader.php
+        -
+            message: "#^Service \"[.a-zA-Z\\\\]+\" is private\\.$#"
+            paths:
+                - tests/
+        -
+            message: """
+                    #^Call to deprecated method getUsername\\(\\) of class Buddy\\\\Repman\\\\Security\\\\Model\\\\User\\:
+                    since Symfony 5\\.3, use getUserIdentifier\\(\\) instead$#
+                """
+            count: 1
+            path: tests/Unit/Security/Model/UserTest.php
+        -
+            message: """
+                    #^Call to deprecated method getUsername\\(\\) of class Buddy\\\\Repman\\\\Security\\\\Model\\\\Organization\\:
+                    since Symfony 5\\.3, use getUserIdentifier\\(\\) instead$#
+                """
+            count: 1
+            path: tests/Unit/Security/Model/OrganizationTest.php
 
     bootstrapFiles:
         - vendor/twig/twig/src/Extension/CoreExtension.php # twig global functions

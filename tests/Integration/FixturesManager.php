@@ -21,7 +21,9 @@ use Buddy\Repman\Message\User\ConfirmEmail;
 use Buddy\Repman\Message\User\CreateOAuthUser;
 use Buddy\Repman\Message\User\CreateUser;
 use Buddy\Repman\Message\User\DisableUser;
+use Buddy\Repman\Message\User\GenerateApiToken;
 use Buddy\Repman\MessageHandler\Proxy\AddDownloadsHandler;
+use Buddy\Repman\Query\User\Model\Package\Link;
 use Buddy\Repman\Repository\OrganizationRepository;
 use Buddy\Repman\Repository\PackageRepository;
 use Buddy\Repman\Repository\ScanResultRepository;
@@ -31,18 +33,15 @@ use Doctrine\ORM\EntityManagerInterface;
 use Munus\Collection\Stream;
 use Ramsey\Uuid\Uuid;
 use Symfony\Bundle\FrameworkBundle\Test\TestContainer;
-use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Messenger\MessageBusInterface;
 
 final class FixturesManager
 {
     private TestContainer $container;
-    private Filesystem $filesystem;
 
     public function __construct(TestContainer $container)
     {
         $this->container = $container;
-        $this->filesystem = new Filesystem();
     }
 
     /**
@@ -84,14 +83,22 @@ final class FixturesManager
         return $id;
     }
 
-    public function createToken(string $orgId, string $value): void
+    public function createToken(string $orgId, string $value, string $name = 'token'): void
     {
         $this->container->get(TokenGenerator::class)->setNextToken($value);
         $this->dispatchMessage(
             new GenerateToken(
                 $orgId,
-                'token'
+                $name
             )
+        );
+    }
+
+    public function createApiToken(string $userId, string $value = 'api-token', string $name = 'token'): void
+    {
+        $this->container->get(TokenGenerator::class)->setNextToken($value);
+        $this->dispatchMessage(
+            new GenerateApiToken($userId, $name)
         );
     }
 
@@ -109,12 +116,13 @@ final class FixturesManager
         return $userId;
     }
 
-    public function createPackage(string $id, string $organization = 'buddy'): void
+    public function createPackage(string $id, string $organization = 'buddy', string $organizationId = null): void
     {
+        $organization = $organizationId !== null ? $organizationId : $this->createOrganization($organization, $this->createUser());
         $this->dispatchMessage(
             new AddPackage(
                 $id,
-                $this->createOrganization($organization, $this->createUser()),
+                $organization,
                 'https://github.com/buddy-works/repman',
                 'vcs'
             )
@@ -132,7 +140,7 @@ final class FixturesManager
                 $orgId,
                 $url,
                 $type,
-                $metadata
+                $metadata,
             )
         );
 
@@ -146,13 +154,20 @@ final class FixturesManager
         $this->container->get('doctrine.orm.entity_manager')->flush($package);
     }
 
-    public function addPackageDownload(int $count, string $packageId, string $version = '1.0.0'): void
+    public function setWebhookError(string $packageId, string $error): void
     {
-        Stream::range(1, $count)->forEach(function (int $index) use ($packageId, $version): void {
+        $package = $this->container->get(PackageRepository::class)->getById(Uuid::fromString($packageId));
+        $package->webhookWasNotCreated($error);
+        $this->container->get('doctrine.orm.entity_manager')->flush($package);
+    }
+
+    public function addPackageDownload(int $count, string $packageId, string $version = '1.0.0', ?\DateTimeImmutable $date = null): void
+    {
+        Stream::range(1, $count)->forEach(function (int $index) use ($packageId, $version, $date): void {
             $this->dispatchMessage(new AddDownload(
                 $packageId,
                 $version,
-                new \DateTimeImmutable(),
+                $date ?? new \DateTimeImmutable(),
                 '192.168.0.1',
                 'Composer 19.10'
             ));
@@ -186,10 +201,11 @@ final class FixturesManager
 
     /**
      * @param Version[] $versions
+     * @param Link[]    $links
      */
-    public function syncPackageWithData(string $packageId, string $name, string $description, string $latestReleasedVersion, \DateTimeImmutable $latestReleaseDate, array $versions = []): void
+    public function syncPackageWithData(string $packageId, string $name, string $description, string $latestReleasedVersion, \DateTimeImmutable $latestReleaseDate, array $versions = [], array $links = [], ?string $readme = null, ?string $replacementPackage = null): void
     {
-        $this->container->get(PackageSynchronizer::class)->setData($name, $description, $latestReleasedVersion, $latestReleaseDate, $versions);
+        $this->container->get(PackageSynchronizer::class)->setData($name, $description, $latestReleasedVersion, $latestReleaseDate, $versions, $links, $readme, $replacementPackage);
         $this->dispatchMessage(new SynchronizePackage($packageId));
         $this->container->get(EntityManagerInterface::class)->flush();
     }
@@ -217,9 +233,12 @@ final class FixturesManager
 
     public function prepareRepoFiles(): void
     {
-        $this->filesystem->mirror(
+        $filesystem = new \Symfony\Component\Filesystem\Filesystem();
+        $filesystem->mirror(
             __DIR__.'/../Resources/fixtures/buddy/dist/buddy-works/repman',
-            __DIR__.'/../Resources/buddy/dist/buddy-works/repman'
+            __DIR__.'/../Resources/buddy/dist/buddy-works/repman',
+            null,
+            ['delete' => true]
         );
     }
 

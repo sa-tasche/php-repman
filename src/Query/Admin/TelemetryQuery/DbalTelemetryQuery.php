@@ -23,7 +23,7 @@ final class DbalTelemetryQuery implements TelemetryQuery
     {
         return (int) $this
             ->connection
-            ->fetchColumn(
+            ->fetchOne(
                 'SELECT COUNT(id) FROM "user"',
             );
     }
@@ -41,7 +41,7 @@ final class DbalTelemetryQuery implements TelemetryQuery
                 $data['members'],
                 $data['owners'],
             );
-        }, $this->connection->fetchAll(
+        }, $this->connection->fetchAllAssociative(
             'SELECT
                 o.id,
                 COUNT(t.value) tokens,
@@ -54,10 +54,10 @@ final class DbalTelemetryQuery implements TelemetryQuery
             GROUP BY o.id
             LIMIT :limit OFFSET :offset',
             [
-                ':role_member' => Member::ROLE_MEMBER,
-                ':role_owner' => Member::ROLE_OWNER,
-                ':limit' => $limit,
-                ':offset' => $offset,
+                'role_member' => Member::ROLE_MEMBER,
+                'role_owner' => Member::ROLE_OWNER,
+                'limit' => $limit,
+                'offset' => $offset,
             ])
         );
     }
@@ -66,7 +66,7 @@ final class DbalTelemetryQuery implements TelemetryQuery
     {
         return (int) $this
             ->connection
-            ->fetchColumn(
+            ->fetchOne(
                 'SELECT COUNT(id) FROM "organization"'
             );
     }
@@ -88,7 +88,7 @@ final class DbalTelemetryQuery implements TelemetryQuery
                 $data['downloads'],
                 $data['webhooks'],
             );
-        }, $this->connection->fetchAll(
+        }, $this->connection->fetchAllAssociative(
             'SELECT
                 p.type,
                 p.latest_release_date,
@@ -103,10 +103,10 @@ final class DbalTelemetryQuery implements TelemetryQuery
             WHERE p.organization_id = :organization_id
             LIMIT :limit OFFSET :offset',
             [
-                ':organization_id' => $organizationId,
-                ':till' => $till->format('Y-m-d'),
-                ':limit' => $limit,
-                ':offset' => $offset,
+                'organization_id' => $organizationId,
+                'till' => $till->format('Y-m-d'),
+                'limit' => $limit,
+                'offset' => $offset,
             ])
         );
     }
@@ -115,11 +115,11 @@ final class DbalTelemetryQuery implements TelemetryQuery
     {
         return (int) $this
             ->connection
-            ->fetchColumn(
+            ->fetchOne(
                 'SELECT COUNT(id) FROM "organization_package"
                 WHERE organization_id = :organization_id',
                 [
-                    ':organization_id' => $organizationId,
+                    'organization_id' => $organizationId,
                 ]
             );
     }
@@ -128,10 +128,10 @@ final class DbalTelemetryQuery implements TelemetryQuery
     {
         return (int) $this
             ->connection
-            ->fetchColumn(
+            ->fetchOne(
                 'SELECT COUNT(date) FROM "proxy_package_download"
                 WHERE date::date <= :till',
-                [':till' => $till->format('Y-m-d')]
+                ['till' => $till->format('Y-m-d')]
             );
     }
 
@@ -139,10 +139,10 @@ final class DbalTelemetryQuery implements TelemetryQuery
     {
         return (int) $this
             ->connection
-            ->fetchColumn(
+            ->fetchOne(
                 'SELECT COUNT(date) FROM "organization_package_download"
                 WHERE date::date <= :till',
-                [':till' => $till->format('Y-m-d')]
+                ['till' => $till->format('Y-m-d')]
             );
     }
 }

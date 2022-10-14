@@ -15,7 +15,7 @@ use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\LockInterface;
-use Symfony\Component\Lock\Store\PdoStore;
+use Symfony\Component\Lock\Store\DoctrineDbalStore;
 
 final class ProxySyncReleasesCommandTest extends FunctionalTestCase
 {
@@ -35,7 +35,7 @@ final class ProxySyncReleasesCommandTest extends FunctionalTestCase
         $commandTester = new CommandTester($command);
         $result = $commandTester->execute([]);
 
-        self::assertTrue(file_exists($newDist));
+        self::assertFileExists($newDist);
         self::assertEquals($result, 0);
         @unlink($newDist);
 
@@ -44,7 +44,7 @@ final class ProxySyncReleasesCommandTest extends FunctionalTestCase
         $commandTester = new CommandTester($command);
         $result = $commandTester->execute([]);
 
-        self::assertFalse(file_exists($newDist));
+        self::assertFileDoesNotExist($newDist);
         self::assertEquals($result, 0);
     }
 
@@ -68,7 +68,7 @@ final class ProxySyncReleasesCommandTest extends FunctionalTestCase
         $commandTester = new CommandTester($command);
         $result = $commandTester->execute([]);
 
-        self::assertFalse(file_exists($newDist));
+        self::assertFileDoesNotExist($newDist);
         self::assertEquals($result, 0);
     }
 
@@ -112,6 +112,6 @@ final class ProxySyncReleasesCommandTest extends FunctionalTestCase
         /** @var Connection */
         $connection = self::$kernel->getContainer()->get('doctrine')->getConnection();
 
-        return new LockFactory(new PdoStore($connection));
+        return new LockFactory(new DoctrineDbalStore($connection));
     }
 }

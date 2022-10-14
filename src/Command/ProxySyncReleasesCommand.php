@@ -18,6 +18,8 @@ final class ProxySyncReleasesCommand extends Command
 {
     const LOCK_TTL = 30;
 
+    protected static $defaultName = 'repman:proxy:sync-releases';
+
     private ProxyRegister $register;
     private Downloader $downloader;
     private AdapterInterface $cache;
@@ -40,12 +42,11 @@ final class ProxySyncReleasesCommand extends Command
     protected function configure()
     {
         $this
-            ->setName('repman:proxy:sync-releases')
             ->setDescription('Sync proxy releases with packagist.org')
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->lock = $this
             ->lockFactory
@@ -78,7 +79,7 @@ final class ProxySyncReleasesCommand extends Command
         }
 
         foreach ($feed->channel->item as $item) {
-            list($name, $version) = explode(' ', (string) $item->guid);
+            [$name, $version] = explode(' ', (string) $item->guid);
             if (isset($syncedPackages[$name])) {
                 $this->lock->refresh();
                 $proxy->download($name, $version);
@@ -110,7 +111,7 @@ final class ProxySyncReleasesCommand extends Command
 
         $xml = @simplexml_load_string((string) stream_get_contents($stream));
         if ($xml === false) {
-            throw new \RunTimeException('Unable to parse RSS feed');
+            throw new \RuntimeException('Unable to parse RSS feed');
         }
 
         return $xml;

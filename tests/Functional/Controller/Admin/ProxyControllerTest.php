@@ -19,7 +19,7 @@ final class ProxyControllerTest extends FunctionalTestCase
     {
         $this->fixtures->addProxyPackageDownload(
             [new Package('buddy-works/repman', '1.0.0.0')],
-            new \DateTimeImmutable($time = 'April 27, 2020 19:34')
+            new \DateTimeImmutable($time = '2020-04-27 19:34:00')
         );
         $this->client->request('GET', $this->urlTo('admin_dist_list', ['proxy' => 'packagist.org']));
 
@@ -31,12 +31,12 @@ final class ProxyControllerTest extends FunctionalTestCase
     {
         $this->fixtures->addProxyPackageDownload(
             [new Package('buddy-works/repman', '1.0.0.0')],
-            new \DateTimeImmutable('April 27, 2020 19:34')
+            new \DateTimeImmutable('2020-04-27 19:34:00')
         );
-        $this->client->request('GET', $this->urlTo('admin_proxy_stats'));
+        $crawler = $this->client->request('GET', $this->urlTo('admin_proxy_stats'));
 
         self::assertTrue($this->client->getResponse()->isOk());
-        self::assertStringContainsString('Total installs: 1', $this->lastResponseBody());
+        self::assertStringContainsString('Total installs: 1', $crawler->text(null, true));
     }
 
     public function testRemoveDistPackage(): void
@@ -44,6 +44,7 @@ final class ProxyControllerTest extends FunctionalTestCase
         $this->client->request('DELETE', $this->urlTo('admin_dist_remove', ['proxy' => 'packagist.org', 'packageName' => 'vendor/package']));
 
         self::assertTrue($this->client->getResponse()->isRedirect($this->urlTo('admin_dist_list', ['proxy' => 'packagist.org'])));
-        self::assertTrue($this->container()->get('session')->getFlashBag()->has('success'));
+        $this->client->followRedirect();
+        self::assertStringContainsString('Dist files for package vendor/package will be removed', $this->lastResponseBody());
     }
 }

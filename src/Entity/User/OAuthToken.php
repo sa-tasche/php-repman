@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Buddy\Repman\Entity\User;
 
 use Buddy\Repman\Entity\User;
-use Buddy\Repman\Entity\User\OAuthToken\ExpiredOAuthTokenException;
+use Buddy\Repman\Service\User\UserOAuthTokenRefresher;
 use Doctrine\ORM\Mapping as ORM;
 use Doctrine\ORM\Mapping\UniqueConstraint;
 use Ramsey\Uuid\UuidInterface;
@@ -87,32 +87,22 @@ class OAuthToken
         return $this->type() === $type;
     }
 
-    public function accessToken(): string
+    public function accessToken(UserOAuthTokenRefresher $tokenRefresher): string
     {
         if ($this->expiresAt !== null && (new \DateTimeImmutable()) > $this->expiresAt->modify('-1 min')) {
-            throw new ExpiredOAuthTokenException($this->user->id()->toString(), $this->type);
+            if ($this->refreshToken === null) {
+                throw new \LogicException('Unable to refresh access token without refresh token');
+            }
+
+            try {
+                $newToken = $tokenRefresher->refresh($this->type, $this->refreshToken);
+                $this->accessToken = $newToken->token();
+                $this->expiresAt = $newToken->expiresAt();
+            } catch (\Throwable $exception) {
+                throw new \RuntimeException('An error occurred while refreshing the access token: '.$exception->getMessage());
+            }
         }
 
         return $this->accessToken;
-    }
-
-    public function hasRefreshToken(): bool
-    {
-        return $this->refreshToken !== null;
-    }
-
-    public function refreshToken(): string
-    {
-        if ($this->refreshToken === null) {
-            throw new \RuntimeException(sprintf('No refresh token for %s token', $this->id->toString()));
-        }
-
-        return $this->refreshToken;
-    }
-
-    public function refresh(string $accessToken, ?\DateTimeImmutable $expiresAt = null): void
-    {
-        $this->accessToken = $accessToken;
-        $this->expiresAt = $expiresAt;
     }
 }

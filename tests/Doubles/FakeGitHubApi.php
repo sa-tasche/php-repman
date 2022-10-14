@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace Buddy\Repman\Tests\Doubles;
 
-use Buddy\Repman\Service\GitHubApi;
+use Buddy\Repman\Service\Integration\GitHubApi;
 
 final class FakeGitHubApi implements GitHubApi
 {
     private string $primaryEmail = '';
     private ?\Throwable $exception = null;
+    /**
+     * @var string[]
+     */
+    private array $removedWebhooks = [];
 
     public function primaryEmail(string $accessToken): string
     {
@@ -48,6 +52,15 @@ final class FakeGitHubApi implements GitHubApi
     public function removeHook(string $accessToken, string $repo, string $url): void
     {
         $this->throwExceptionIfSet();
+        $this->removedWebhooks[] = $repo;
+    }
+
+    /**
+     * @return string[]
+     */
+    public function removedWebhooks(): array
+    {
+        return $this->removedWebhooks;
     }
 
     private function throwExceptionIfSet(): void

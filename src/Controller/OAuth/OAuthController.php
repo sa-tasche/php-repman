@@ -6,7 +6,6 @@ namespace Buddy\Repman\Controller\OAuth;
 
 use Buddy\Repman\Message\User\AddOAuthToken;
 use Buddy\Repman\Message\User\CreateOAuthUser;
-use Buddy\Repman\Message\User\RefreshOAuthToken;
 use Buddy\Repman\Security\Model\User;
 use Buddy\Repman\Security\UserGuardHelper;
 use Buddy\Repman\Service\Config;
@@ -19,38 +18,26 @@ use Ramsey\Uuid\Uuid;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\Session\SessionInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
-use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Component\Messenger\MessageBusInterface;
 
 abstract class OAuthController extends AbstractController
 {
     protected UserGuardHelper $guard;
     protected ClientRegistry $oauth;
-    protected SessionInterface $session;
     private Config $config;
+    private MessageBusInterface $messageBus;
 
-    public function __construct(UserGuardHelper $guard, ClientRegistry $oauth, SessionInterface $session, Config $config)
-    {
+    public function __construct(
+        UserGuardHelper $guard,
+        ClientRegistry $oauth,
+        Config $config,
+        MessageBusInterface $messageBus
+    ) {
         $this->guard = $guard;
         $this->oauth = $oauth;
-        $this->session = $session;
         $this->config = $config;
-    }
-
-    /**
-     * @Route("/user/token/{type}/refresh", name="refresh_oauth_token", methods={"GET"}, requirements={"type":"bitbucket|github|gitlab"})
-     */
-    public function refreshRepoToken(string $type): Response
-    {
-        /** @var User $user */
-        $user = $this->getUser();
-        $this->dispatchMessage(new RefreshOAuthToken($user->id(), $type));
-
-        return $this->redirectToRoute('organization_package_new', [
-            'organization' => $this->session->get('organization', $user->firstOrganizationAlias()->getOrElseThrow(new NotFoundHttpException())),
-            'type' => $type,
-        ]);
+        $this->messageBus = $messageBus;
     }
 
     /**
@@ -66,7 +53,7 @@ abstract class OAuthController extends AbstractController
             $email = $emailProvider();
             $params = [];
             if (!$this->guard->userExists($email)) {
-                $this->dispatchMessage(new CreateOAuthUser($email));
+                $this->messageBus->dispatch(new CreateOAuthUser($email));
                 $this->addFlash('success', 'Your account has been created. Please create a new organization.');
                 $params['origin'] = $type;
             } else {
@@ -84,14 +71,14 @@ abstract class OAuthController extends AbstractController
         return $this->redirectToRoute('app_register');
     }
 
-    protected function storeRepoToken(string $type, callable $tokenProvider, string $route): Response
+    protected function storeRepoToken(Request $request, string $type, callable $tokenProvider, string $route): Response
     {
         /** @var User $user */
         $user = $this->getUser();
         try {
             /** @var AccessToken $token */
             $token = $tokenProvider();
-            $this->dispatchMessage(
+            $this->messageBus->dispatch(
                 new AddOAuthToken(
                     Uuid::uuid4()->toString(),
                     $user->id(),
@@ -103,14 +90,14 @@ abstract class OAuthController extends AbstractController
             );
 
             return $this->redirectToRoute($route, [
-                'organization' => $this->session->get('organization', $user->firstOrganizationAlias()->getOrElseThrow(new NotFoundHttpException())),
+                'organization' => $request->getSession()->get('organization', $user->firstOrganizationAlias()->getOrElseThrow(new NotFoundHttpException())),
                 'type' => $type,
             ]);
         } catch (OAuth2ClientException | IdentityProviderException $e) {
             $this->addFlash('danger', 'Error while getting oauth token: '.$e->getMessage());
 
             return $this->redirectToRoute('organization_package_new', [
-                'organization' => $this->session->get('organization', $user->firstOrganizationAlias()->getOrElseThrow(new NotFoundHttpException())),
+                'organization' => $request->getSession()->get('organization', $user->firstOrganizationAlias()->getOrElseThrow(new NotFoundHttpException())),
             ]);
         }
     }

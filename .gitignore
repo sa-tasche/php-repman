@@ -24,12 +24,12 @@
 ###> IDE ###
 /.vscode
 /.phan
+/.idea
 ###< IDE ###
 
 ###> OS ###
 .DS_Store
 ###< OS ###
-
 
 ###> Docker ###
 docker-compose.*.yml
@@ -40,3 +40,5 @@ docker-compose.*.yml
 /docker/nginx/ssl/private/*
 !/docker/nginx/ssl/private/.gitkeep
 ###< Docker ###
+
+composer.phar

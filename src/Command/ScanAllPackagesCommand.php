@@ -16,6 +16,8 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 final class ScanAllPackagesCommand extends Command
 {
+    protected static $defaultName = 'repman:security:scan-all';
+
     private PackageScanner $scanner;
     private PackageQuery $packageQuery;
     private PackageRepository $packageRepository;
@@ -37,12 +39,11 @@ final class ScanAllPackagesCommand extends Command
     protected function configure()
     {
         $this
-            ->setName('repman:security:scan-all')
             ->setDescription('Scan all synchronized packages')
         ;
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $count = $this->packageQuery->getAllSynchronizedCount();
         $limit = 50;

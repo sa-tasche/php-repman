@@ -7,7 +7,7 @@ namespace Buddy\Repman\Repository;
 use Buddy\Repman\Entity\Organization\Package;
 use Buddy\Repman\Entity\Organization\Package\Download;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
-use Doctrine\Common\Persistence\ManagerRegistry;
+use Doctrine\Persistence\ManagerRegistry;
 use Ramsey\Uuid\UuidInterface;
 
 /**
@@ -36,9 +36,9 @@ class PackageRepository extends ServiceEntityRepository
 
     public function packageExist(string $name, UuidInterface $organizationId): bool
     {
-        return false !== $this->_em->getConnection()->fetchColumn('SELECT id FROM organization_package WHERE name = :name AND organization_id = :organizationId', [
-            ':name' => $name,
-            ':organizationId' => $organizationId->toString(),
+        return false !== $this->_em->getConnection()->fetchOne('SELECT id FROM organization_package WHERE name = :name AND organization_id = :organizationId', [
+            'name' => $name,
+            'organizationId' => $organizationId->toString(),
         ]);
     }
 

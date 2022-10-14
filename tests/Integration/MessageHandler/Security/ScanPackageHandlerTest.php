@@ -7,6 +7,7 @@ namespace Buddy\Repman\Tests\Integration\MessageHandler\Security;
 use Buddy\Repman\Message\Security\ScanPackage;
 use Buddy\Repman\MessageHandler\Security\ScanPackageHandler;
 use Buddy\Repman\Query\User\PackageQuery;
+use Buddy\Repman\Query\User\PackageQuery\Filter;
 use Buddy\Repman\Tests\Integration\IntegrationTestCase;
 
 final class ScanPackageHandlerTest extends IntegrationTestCase
@@ -31,7 +32,7 @@ final class ScanPackageHandlerTest extends IntegrationTestCase
         $package = $this
             ->container()
             ->get(PackageQuery::class)
-            ->findAll($this->organizationId)[0];
+            ->findAll($this->organizationId, new Filter())[0];
 
         self::assertEquals($package->scanResultStatus(), 'pending');
     }

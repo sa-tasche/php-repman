@@ -7,30 +7,40 @@ namespace Buddy\Repman\Tests\Unit\Service\Organization;
 use Buddy\Repman\Query\User\Model\PackageName;
 use Buddy\Repman\Service\Dist;
 use Buddy\Repman\Service\Dist\Storage;
-use Buddy\Repman\Service\Dist\Storage\FileStorage;
-use Buddy\Repman\Service\Dist\Storage\InMemoryStorage;
 use Buddy\Repman\Service\Organization\PackageManager;
 use Buddy\Repman\Tests\Doubles\FakeDownloader;
+use League\Flysystem\Adapter\Local;
+use League\Flysystem\Filesystem;
+use League\Flysystem\FilesystemInterface;
+use League\Flysystem\Memory\MemoryAdapter;
 use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
-use Symfony\Component\Filesystem\Filesystem;
+use Prophecy\PhpUnit\ProphecyTrait;
 
 final class PackageManagerTest extends TestCase
 {
+    use ProphecyTrait;
+
     private PackageManager $manager;
     private string $baseDir;
-    private Filesystem $filesystem;
+    private FilesystemInterface $filesystem;
 
     protected function setUp(): void
     {
-        $this->filesystem = new Filesystem();
-        $this->manager = new PackageManager(new InMemoryStorage(), __DIR__.'/../../../Resources/fixtures', $this->filesystem);
-        $this->baseDir = sys_get_temp_dir().'/repman';
+        $basePath = \dirname(__DIR__, 3);
+        $this->filesystem = new Filesystem(new Local($basePath.'/Resources/fixtures/'));
+        $this->manager = new PackageManager(
+            new Storage(
+                new FakeDownloader(), new Filesystem(new MemoryAdapter())
+            ),
+            $this->filesystem
+        );
+        $this->baseDir = \sys_get_temp_dir().'/repman';
     }
 
     public function testFindProvidersForPackage(): void
     {
-        $providers = $this->manager->findProviders('buddy', [
+        [,$providers] = $this->manager->findProviders('buddy', [
             new PackageName('id', 'buddy-works/repman'),
             new PackageName('id', 'not-exist/missing'),
         ]);
@@ -56,7 +66,7 @@ final class PackageManagerTest extends TestCase
             __DIR__.'/../../../Resources/buddy/dist/buddy-works/repman/1.2.3.0_ac7dcaf888af2324cd14200769362129c8dd8550.zip'
         );
 
-        $manager = new PackageManager($storage->reveal(), __DIR__.'/../../../Resources', $this->filesystem);
+        $manager = new PackageManager($storage->reveal(), $this->filesystem);
 
         self::assertStringContainsString(
             '1.2.3.0_ac7dcaf888af2324cd14200769362129c8dd8550.zip',
@@ -66,11 +76,7 @@ final class PackageManagerTest extends TestCase
 
     public function testRemoveProvider(): void
     {
-        $manager = new PackageManager(
-            new FileStorage($this->baseDir, new FakeDownloader()),
-            $this->baseDir,
-            $this->filesystem
-        );
+        $manager = $this->getManagerWithLocalStorage();
 
         $org = 'buddy';
         $package1 = 'vendor/package1';
@@ -79,58 +85,60 @@ final class PackageManagerTest extends TestCase
         $manager->saveProvider([], $org, $package1);
         $manager->saveProvider([], $org, $package2);
 
-        self::assertTrue(file_exists($this->baseDir.'/buddy/p/'.$package1.'.json'));
-        self::assertTrue(file_exists($this->baseDir.'/buddy/p/'.$package2.'.json'));
+        self::assertFileExists($this->baseDir.'/buddy/p/'.$package1.'.json');
+        self::assertFileExists($this->baseDir.'/buddy/p/'.$package2.'.json');
 
         $manager->removeProvider($org, $package1);
 
-        self::assertTrue(is_dir($this->baseDir.'/buddy'));
-        self::assertTrue(is_dir(dirname($this->baseDir.'/buddy/p/'.$package1)));
-        self::assertFalse(file_exists($this->baseDir.'/buddy/p/'.$package1.'.json'));
-        self::assertTrue(file_exists($this->baseDir.'/buddy/p/'.$package2.'.json'));
+        self::assertDirectoryExists($this->baseDir.'/buddy');
+        self::assertDirectoryExists(\dirname($this->baseDir.'/buddy/p/'.$package1));
+        self::assertFileDoesNotExist($this->baseDir.'/buddy/p/'.$package1.'.json');
+        self::assertFileExists($this->baseDir.'/buddy/p/'.$package2.'.json');
     }
 
     public function testRemoveDist(): void
     {
-        $manager = new PackageManager(
-            new FileStorage($this->baseDir, new FakeDownloader()),
-            $this->baseDir,
-            $this->filesystem
-        );
+        $manager = $this->getManagerWithLocalStorage();
 
         $org = 'buddy';
         $package1 = 'vendor/package1';
         $package2 = 'vendor/package2';
 
-        @mkdir($this->baseDir.'/buddy/dist/'.$package1, 0777, true);
-        @mkdir($this->baseDir.'/buddy/dist/'.$package2, 0777, true);
+        @\mkdir($this->baseDir.'/buddy/dist/'.$package1, 0777, true);
+        @\mkdir($this->baseDir.'/buddy/dist/'.$package2, 0777, true);
 
         $manager->removeDist($org, $package1);
 
-        self::assertTrue(is_dir($this->baseDir.'/buddy'));
-        self::assertTrue(is_dir($this->baseDir.'/buddy/dist/vendor'));
-        self::assertFalse(is_dir($this->baseDir.'/buddy/dist/'.$package1));
-        self::assertTrue(is_dir($this->baseDir.'/buddy/dist/'.$package2));
+        self::assertDirectoryExists($this->baseDir.'/buddy');
+        self::assertDirectoryExists($this->baseDir.'/buddy/dist/vendor');
+        self::assertDirectoryDoesNotExist($this->baseDir.'/buddy/dist/'.$package1);
+        self::assertDirectoryExists($this->baseDir.'/buddy/dist/'.$package2);
     }
 
     public function testRemoveOrganizationDir(): void
     {
-        $manager = new PackageManager(
-            new FileStorage($this->baseDir, new FakeDownloader()),
-            $this->baseDir,
-            $this->filesystem
-        );
+        $manager = $this->getManagerWithLocalStorage();
 
         $org = 'buddy';
         $package = 'hello/world';
 
         $manager->saveProvider([], $org, $package);
 
-        self::assertTrue(is_dir($this->baseDir.'/buddy/p/hello'));
+        self::assertDirectoryExists($this->baseDir.'/buddy/p/hello');
 
         $manager->removeProvider($org, $package)
             ->removeOrganizationDir($org);
 
-        self::assertFalse(is_dir($this->baseDir.'/buddy'));
+        self::assertDirectoryDoesNotExist($this->baseDir.'/buddy');
+    }
+
+    private function getManagerWithLocalStorage(): PackageManager
+    {
+        $repoFilesystem = new Filesystem(new Local($this->baseDir));
+
+        return new PackageManager(
+            new Storage(new FakeDownloader(), $repoFilesystem),
+            $repoFilesystem
+        );
     }
 }

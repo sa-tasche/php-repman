@@ -7,9 +7,11 @@ namespace Buddy\Repman\Form\Type\Organization;
 use Symfony\Component\Form\AbstractType;
 use Symfony\Component\Form\Extension\Core\Type\ChoiceType;
 use Symfony\Component\Form\Extension\Core\Type\HiddenType;
+use Symfony\Component\Form\Extension\Core\Type\IntegerType;
 use Symfony\Component\Form\Extension\Core\Type\SubmitType;
 use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\Validator\Constraints\NotNull;
+use Symfony\Component\Validator\Constraints\PositiveOrZero;
 
 class AddPackageType extends AbstractType
 {
@@ -60,6 +62,15 @@ class AddPackageType extends AbstractType
                 ],
                 'constraints' => [
                     new NotNull(),
+                ],
+            ])
+            ->add('keepLastReleases', IntegerType::class, [
+                'label' => 'Keep last releases',
+                'data' => 0,
+                'help' => 'Number of last releases that will be downloaded. Put "0" to download all.',
+                'required' => false,
+                'constraints' => [
+                    new PositiveOrZero(),
                 ],
             ])
             ->add('Add', SubmitType::class);

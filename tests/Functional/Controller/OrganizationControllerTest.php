@@ -8,10 +8,16 @@ use Buddy\Repman\Entity\Organization\Package\Metadata;
 use Buddy\Repman\Entity\Organization\Package\Version;
 use Buddy\Repman\Entity\User\OAuthToken;
 use Buddy\Repman\Message\Security\ScanPackage;
-use Buddy\Repman\Service\GitHubApi;
+use Buddy\Repman\Query\User\Model\Package\Link;
+use Buddy\Repman\Query\User\OrganizationQuery\DbalOrganizationQuery;
+use Buddy\Repman\Query\User\PackageQuery;
+use Buddy\Repman\Repository\OrganizationRepository;
+use Buddy\Repman\Service\Integration\BitbucketApi;
+use Buddy\Repman\Service\Integration\GitHubApi;
 use Buddy\Repman\Service\Organization\TokenGenerator;
 use Buddy\Repman\Tests\Functional\FunctionalTestCase;
 use Ramsey\Uuid\Uuid;
+use function Ramsey\Uuid\v4;
 use Symfony\Component\Messenger\Transport\InMemoryTransport;
 
 final class OrganizationControllerTest extends FunctionalTestCase
@@ -93,7 +99,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertTrue($this->client->getResponse()->isForbidden());
     }
 
-    public function testPackages(): void
+    public function testPackageList(): void
     {
         $anotherUserID = $this->fixtures->createUser('another@user.com', 'secret');
 
@@ -111,6 +117,175 @@ final class OrganizationControllerTest extends FunctionalTestCase
             '1 entries',
             (string) $this->client->getResponse()->getContent()
         );
+    }
+
+    public function testPackageSearch(): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/testing', '1', '1.1.1', new \DateTimeImmutable());
+
+        $packageId2 = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $this->fixtures->syncPackageWithData($packageId2, 'buddy-works/example', '2', '1.1.1', new \DateTimeImmutable());
+
+        // Check both packages are returned first
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        self::assertStringContainsString(
+            '2 entries',
+            (string) $this->client->getResponse()->getContent()
+        );
+
+        // Search for 'testing' (which is in name)
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'search' => 'testing']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $response = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('1 entries', $response);
+        self::assertStringContainsString($packageId, $response);
+        self::assertStringNotContainsString($packageId2, $response);
+
+        // Search for '2' (which is in description)
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'search' => '2']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $response = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('1 entries', $response);
+        self::assertStringContainsString($packageId2, $response);
+        self::assertStringNotContainsString($packageId, $response);
+
+        // Test serach query params passing
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'search' => 'buddy', 'limit' => 1]));
+        self::assertTrue($this->client->getResponse()->isOk());
+        $response = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('2 entries', $response);
+        self::assertStringContainsString('search=buddy', $response);
+    }
+
+    public function testDependantSearch(): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/testing', '1', '1.1.1', new \DateTimeImmutable());
+
+        $packageId2 = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $links = [
+            new Link('requires', 'buddy-works/testing', '^1.5'),
+        ];
+        $this->fixtures->syncPackageWithData($packageId2, 'buddy-works/example', '2', '1.1.1', new \DateTimeImmutable(), [], $links);
+
+        // Search for 'testing' (which is in name)
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'search' => 'depends:buddy-works/testing']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $response = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('1 entries', $response);
+        self::assertStringNotContainsString($packageId, $response);
+        self::assertStringContainsString($packageId2, $response);
+    }
+
+    public function testPagination(): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+
+        for ($i = 0; $i < 111; ++$i) {
+            $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        }
+
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('Showing 1 to 1 of 111 entries', $content);
+        self::assertStringContainsString('offset=111&amp;limit=1', $content);
+
+        // Invalid limit (too low)
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => -1]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('Showing 1 to 20 of 111 entries', $content);
+        self::assertStringContainsString('offset=100&amp;limit=20', $content);
+
+        // Invalid limit (too high)
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 101]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('Showing 1 to 100 of 111 entries', $content);
+        self::assertStringContainsString('offset=100&amp;limit=100', $content);
+
+        // Negative offset
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'offset' => -1]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('Showing 1 to 20 of 111 entries', $content);
+        self::assertStringContainsString('offset=0&amp;limit=20', $content);
+    }
+
+    public function testSorting(): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+
+        for ($i = 1; $i < 6; ++$i) {
+            $submissionTime = (new \DateTimeImmutable())->add(new \DateInterval("P{$i}D"));
+
+            $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+            $this->fixtures->syncPackageWithData($packageId, 'buddy-works/package-'.$i, 'Test', "1.{$i}", $submissionTime);
+        }
+
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('buddy-works/package-1', $content);
+        self::assertStringContainsString('sort=name:desc', $content);
+        self::assertStringContainsString('sort=version:asc', $content);
+        self::assertStringContainsString('sort=date:asc', $content);
+
+        // Sort by name desc
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1, 'sort' => 'name:desc']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('buddy-works/package-5', $content);
+        self::assertStringContainsString('sort=name:asc', $content);
+        self::assertStringContainsString('sort=version:asc', $content);
+        self::assertStringContainsString('sort=date:asc', $content);
+
+        // Sort by version desc
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1, 'sort' => 'version:desc']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('buddy-works/package-5', $content);
+        self::assertStringContainsString('sort=name:asc', $content);
+        self::assertStringContainsString('sort=version:desc', $content);
+        self::assertStringContainsString('sort=date:asc', $content);
+
+        // Sort by released date asc
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1, 'sort' => 'date:asc']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('buddy-works/package-1', $content);
+        self::assertStringContainsString('sort=name:asc', $content);
+        self::assertStringContainsString('sort=version:asc', $content);
+        self::assertStringContainsString('sort=date:desc', $content);
+
+        // Sort by invalid column
+        $this->client->request('GET', $this->urlTo('organization_packages', ['organization' => 'buddy', 'limit' => 1, 'sort' => 'invalid-column:asc']));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        $content = (string) $this->client->getResponse()->getContent();
+        self::assertStringContainsString('buddy-works/package-1', $content);
+        self::assertStringContainsString('sort=name:asc', $content);
+        self::assertStringContainsString('sort=version:asc', $content);
+        self::assertStringContainsString('sort=date:asc', $content);
     }
 
     public function testRemovePackage(): void
@@ -156,6 +331,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         $packageId = $this->fixtures->addPackage($organizationId, 'https://buddy.com', 'github-oauth', [Metadata::GITHUB_REPO_NAME => 'some/repo']);
         $this->fixtures->setWebhookCreated($packageId);
 
+        $this->client->disableReboot();
         $this->client->followRedirects();
         $this->client->request('DELETE', $this->urlTo('organization_package_remove', [
             'organization' => 'buddy',
@@ -163,6 +339,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         ]));
 
         self::assertStringContainsString('Package has been successfully removed', $this->lastResponseBody());
+        self::assertEquals(['some/repo'], $this->container()->get(GitHubApi::class)->removedWebhooks());
     }
 
     public function testRemoveGitHubPackageAndIgnoreWebhookError(): void
@@ -180,6 +357,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
         ]));
 
         self::assertStringContainsString('Package has been successfully removed', $this->lastResponseBody());
+        self::assertStringContainsString('Webhook removal failed due to', $this->lastResponseBody());
     }
 
     public function testRemoveGitLabPackage(): void
@@ -243,28 +421,6 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertStringContainsString('will be synchronized in background', $this->lastResponseBody());
     }
 
-    public function testUpdatePackage(): void
-    {
-        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
-        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
-
-        $this->client->request('POST', $this->urlTo('organization_package_update', [
-            'organization' => 'buddy',
-            'package' => $packageId,
-        ]));
-
-        self::assertTrue($this->client->getResponse()->isRedirect(
-            $this->urlTo('organization_packages', ['organization' => 'buddy'])
-        ));
-
-        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/repman', 'Repository manager', '2.1.1', new \DateTimeImmutable('2020-01-01 12:12:12'));
-
-        $this->client->followRedirect();
-        self::assertStringContainsString('Package will be updated in the background', $this->lastResponseBody());
-        self::assertStringContainsString('buddy-works/repman', $this->lastResponseBody());
-        self::assertStringContainsString('2.1.1', $this->lastResponseBody());
-    }
-
     public function testUpdateNonExistingPackage(): void
     {
         $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
@@ -323,13 +479,18 @@ final class OrganizationControllerTest extends FunctionalTestCase
         $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
         $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
         $versions = [
-            new Version(Uuid::uuid4(), '1.0.0', 'someref', 1234, new \DateTimeImmutable()),
-            new Version(Uuid::uuid4(), '1.0.1', 'ref2', 1048576, new \DateTimeImmutable()),
-            new Version(Uuid::uuid4(), '1.1.0', 'lastref', 1073741824, new \DateTimeImmutable()),
+            new Version(Uuid::uuid4(), '1.0.0', 'someref', 1234, new \DateTimeImmutable(), Version::STABILITY_STABLE),
+            new Version(Uuid::uuid4(), '1.0.1', 'ref2', 1048576, new \DateTimeImmutable(), Version::STABILITY_STABLE),
+            new Version(Uuid::uuid4(), '1.1.0', 'lastref', 1073741824, new \DateTimeImmutable(), Version::STABILITY_STABLE),
         ];
-        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/buddy', 'Test', '1.1.1', new \DateTimeImmutable(), $versions);
+        $links = [
+            new Link('requires', 'buddy-works/target', '^1.5'),
+            new Link('suggests', 'buddy-works/buddy', '^2.0'), // Suggest self to test dependant link
+        ];
+        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/buddy', 'Test', '1.1.1', new \DateTimeImmutable(), $versions, $links, 'This is a readme');
+        $this->fixtures->addScanResult($packageId, 'ok');
 
-        $this->client->request('GET', $this->urlTo('organization_package_details', [
+        $crawler = $this->client->request('GET', $this->urlTo('organization_package_details', [
             'organization' => 'buddy',
             'package' => $packageId,
         ]));
@@ -342,6 +503,60 @@ final class OrganizationControllerTest extends FunctionalTestCase
             self::assertStringContainsString($version->version(), $this->lastResponseBody());
             self::assertStringContainsString($version->reference(), $this->lastResponseBody());
         }
+
+        $crawlerText = $crawler->text(null, true);
+
+        self::assertStringContainsString('Requirements', $this->lastResponseBody());
+        foreach ($links as $link) {
+            self::assertStringContainsString("{$link->target()}: {$link->constraint()}", $crawlerText);
+        }
+
+        self::assertStringContainsString('Dependant Packages 1', $crawlerText);
+        self::assertStringContainsString('depends:buddy-works/buddy', $this->lastResponseBody());
+
+        self::assertStringContainsString('This is a readme', $this->lastResponseBody());
+        self::assertStringNotContainsString('This package is <b>abandoned</b>', $this->lastResponseBody());
+
+        $this->client->request('GET', $this->urlTo('organization_package_details', [
+            'organization' => 'buddy',
+            'package' => v4(),
+        ]));
+
+        self::assertTrue($this->client->getResponse()->isNotFound());
+    }
+
+    /**
+     * @dataProvider getAbandonedReplacements
+     */
+    public function testPackageDetailsAbandoned(string $replacementPackage, string $expectedMessage): void
+    {
+        $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $this->fixtures->syncPackageWithData($packageId, 'buddy-works/buddy', 'Test', '1.1.1', new \DateTimeImmutable(), [], [], null, $replacementPackage);
+
+        $this->client->request('GET', $this->urlTo('organization_package_details', [
+            'organization' => 'buddy',
+            'package' => $packageId,
+        ]));
+
+        self::assertTrue($this->client->getResponse()->isOk());
+        self::assertStringContainsString($expectedMessage, $this->lastResponseBody());
+    }
+
+    /**
+     * @return \Generator<array<mixed>>
+     */
+    public function getAbandonedReplacements(): \Generator
+    {
+        yield 'Abandoned without replacement package' => [
+            '',
+            'This package is <b>abandoned</b> and no longer maintained. No replacement package was suggested.',
+        ];
+
+        yield 'Abandoned with replacement package' => [
+            'foo/bar',
+            'This package is <b>abandoned</b> and no longer maintained. The author suggests using the <b>foo/bar</b> package instead.',
+        ];
     }
 
     public function testPackageStats(): void
@@ -350,13 +565,13 @@ final class OrganizationControllerTest extends FunctionalTestCase
         $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
         $this->fixtures->addPackageDownload(3, $packageId, $version = '1.2.3');
 
-        $this->client->request('GET', $this->urlTo('organization_package_stats', [
+        $crawler = $this->client->request('GET', $this->urlTo('organization_package_stats', [
             'organization' => 'buddy',
             'package' => $packageId,
         ]));
 
         self::assertTrue($this->client->getResponse()->isOk());
-        self::assertStringContainsString('Total installs: 3', $this->lastResponseBody());
+        self::assertStringContainsString('Total installs: 3', $crawler->text(null, true));
 
         $this->client->request('GET', $this->urlTo('organization_package_version_stats', [
             'organization' => 'buddy',
@@ -371,7 +586,7 @@ final class OrganizationControllerTest extends FunctionalTestCase
     public function testPackageWebhookPage(): void
     {
         $buddyId = $this->fixtures->createOrganization('buddy', $this->userId);
-        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com', 'github-oauth', [Metadata::GITHUB_REPO_NAME => 'buddy/works']);
 
         $this->client->request('POST', '/hook/'.$packageId);
         $this->client->request('GET', $this->urlTo('organization_package_webhook', [
@@ -383,6 +598,14 @@ final class OrganizationControllerTest extends FunctionalTestCase
         self::assertStringContainsString($this->urlTo('package_webhook', ['package' => $packageId]), $this->lastResponseBody());
         // last requests table is visible
         self::assertStringContainsString('User agent', $this->lastResponseBody());
+
+        $this->fixtures->setWebhookError($packageId, 'Repository was archived so is read-only.');
+
+        $this->client->request('GET', $this->urlTo('organization_package_webhook', [
+            'organization' => 'buddy',
+            'package' => $packageId,
+        ]));
+        self::assertStringContainsString('Repository was archived so is read-only.', $this->lastResponseBody());
     }
 
     public function testOrganizationStats(): void
@@ -391,12 +614,12 @@ final class OrganizationControllerTest extends FunctionalTestCase
         $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
         $this->fixtures->addPackageDownload(3, $packageId);
 
-        $this->client->request('GET', $this->urlTo('organizations_stats', [
+        $crawler = $this->client->request('GET', $this->urlTo('organizations_stats', [
             'organization' => 'buddy',
         ]));
 
         self::assertTrue($this->client->getResponse()->isOk());
-        self::assertStringContainsString('Total installs: 3', $this->lastResponseBody());
+        self::assertStringContainsString('Total installs: 3', $crawler->text(null, true));
     }
 
     public function testGenerateNewToken(): void
@@ -468,46 +691,89 @@ final class OrganizationControllerTest extends FunctionalTestCase
 
     public function testChangeAlias(): void
     {
-        $this->fixtures->createOrganization('buddy', $this->userId);
+        $organizationId = $this->fixtures->createOrganization('buddy', $this->userId);
         $this->client->followRedirects();
         $this->client->request('GET', $this->urlTo('organization_settings', ['organization' => 'buddy']));
         $this->client->submitForm('Change', [
             'alias' => 'repman',
         ]);
 
+        $organization = $this
+            ->container()
+            ->get(OrganizationRepository::class)
+            ->getById(Uuid::fromString($organizationId));
+
         self::assertTrue($this->client->getResponse()->isOk());
-        self::assertStringContainsString('repman', $this->lastResponseBody());
         self::assertStringContainsString('Organization alias has been successfully changed.', $this->lastResponseBody());
+        self::assertEquals('repman', $organization->alias());
+    }
+
+    public function testChangeAliasWithInvalidChars(): void
+    {
+        $this->fixtures->createOrganization('buddy', $this->userId);
+        $this->client->followRedirects();
+        $this->client->request('GET', $this->urlTo('organization_settings', ['organization' => 'buddy']));
+        $this->client->submitForm('Change', [
+            'alias' => 'https://repman',
+        ]);
+
+        self::assertStringContainsString('Alias can contain only alphanumeric characters and _ or - sign', $this->lastResponseBody());
+        self::assertStringNotContainsString('Organization alias has been successfully changed.', $this->lastResponseBody());
     }
 
     public function testChangeAnonymousAccess(): void
     {
         $this->fixtures->createOrganization('buddy', $this->userId);
         $this->client->followRedirects();
+
+        $organization = $this
+            ->container()
+            ->get(DbalOrganizationQuery::class)
+            ->getByAlias('buddy')
+            ->get();
+
+        self::assertFalse($organization->hasAnonymousAccess());
+
         $this->client->request('GET', $this->urlTo('organization_settings', ['organization' => 'buddy']));
         $this->client->submitForm('changeAnonymousAccess', [
             'hasAnonymousAccess' => true,
         ]);
 
+        $organization = $this
+            ->container()
+            ->get(DbalOrganizationQuery::class)
+            ->getByAlias('buddy')
+            ->get();
+
+        self::assertTrue($organization->hasAnonymousAccess());
         self::assertTrue($this->client->getResponse()->isOk());
-        self::assertStringContainsString('repman', $this->lastResponseBody());
         self::assertStringContainsString('Anonymous access has been successfully changed.', $this->lastResponseBody());
     }
 
     public function testRemoveOrganization(): void
     {
-        $buddyId = $this->fixtures->createOrganization('buddy inc', $this->userId);
-        $packageId = $this->fixtures->addPackage($buddyId, 'https://buddy.com');
+        $organizationId = $this->fixtures->createOrganization('buddy inc', $this->userId);
+        $this->fixtures->createOauthToken($this->userId, OAuthToken::TYPE_GITHUB);
+        $this->fixtures->createOauthToken($this->userId, OAuthToken::TYPE_BITBUCKET);
+        $packageId = $this->fixtures->addPackage($organizationId, 'https://buddy.com');
         $this->fixtures->syncPackageWithData($packageId, 'buddy-works/buddy', 'Test', '1.1.1', new \DateTimeImmutable());
+        $this->fixtures->setWebhookCreated($this->fixtures->addPackage($organizationId, 'https://buddy.com', 'github-oauth', [Metadata::GITHUB_REPO_NAME => 'org/repo']));
+        $this->fixtures->setWebhookCreated($this->fixtures->addPackage($organizationId, 'https://buddy.com', 'bitbucket-oauth', [Metadata::BITBUCKET_REPO_NAME => 'webhook/problem']));
+        $this->container()->get(BitbucketApi::class)->setExceptionOnNextCall(new \RuntimeException('Repository was archived'));
 
         $this->client->request('DELETE', $this->urlTo('organization_remove', [
             'organization' => 'buddy-inc',
         ]));
 
         self::assertTrue($this->client->getResponse()->isRedirect($this->urlTo('index')));
+        $this->client->disableReboot();
         $this->client->followRedirect();
 
         self::assertStringContainsString('Organization buddy inc has been successfully removed', $this->lastResponseBody());
+        self::assertStringContainsString('Repository was archived', $this->lastResponseBody());
+        self::assertEquals(0, $this->container()->get(PackageQuery::class)->count($organizationId, new PackageQuery\Filter()));
+        self::assertEquals(['org/repo'], $this->container()->get(GitHubApi::class)->removedWebhooks());
+        self::assertEquals([], $this->container()->get(BitbucketApi::class)->removedWebhooks());
     }
 
     public function testRemoveForbiddenOrganization(): void
@@ -632,13 +898,13 @@ final class OrganizationControllerTest extends FunctionalTestCase
             'sub-dir/composer.lock' => [],
         ]);
 
-        $this->client->request('GET', $this->urlTo('organization_package_scan_results', [
+        $crawler = $this->client->request('GET', $this->urlTo('organization_package_scan_results', [
             'organization' => $organization,
             'package' => $packageId,
         ]));
 
         self::assertStringContainsString($version, $this->lastResponseBody());
-        self::assertStringContainsString('Package: buddy-works/repman security scan results', $this->lastResponseBody());
+        self::assertStringContainsString('buddy-works/repman security scan results', $crawler->text(null, true));
         self::assertStringContainsString('warning', $this->lastResponseBody());
         self::assertStringContainsString('vendor/some-dependency', $this->lastResponseBody());
         self::assertStringContainsString('6.6.6', $this->lastResponseBody());
