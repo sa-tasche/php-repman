@@ -69,7 +69,7 @@ final class ComposerPackageSynchronizerTest extends TestCase
     {
         $this->synchronizer->synchronize($package = PackageMother::withOrganization('artifact', '/non/exist/path', 'buddy'));
 
-        self::assertEquals('Error: RecursiveDirectoryIterator::__construct(/non/exist/path): failed to open dir: No such file or directory', $this->getProperty($package, 'lastSyncError'));
+        self::assertMatchesRegularExpression('/Error: RecursiveDirectoryIterator::__construct\(\/non\/exist\/path\): (F|f)ailed to open (dir|directory): No such file or directory/', $this->getProperty($package, 'lastSyncError'));
     }
 
     public function testSynchronizePackageFromArtifacts(): void
@@ -111,6 +111,15 @@ final class ComposerPackageSynchronizerTest extends TestCase
         self::assertContains('suggests-buddy-works/suggests-You really should', $linkStrings);
     }
 
+    public function testWithMostRecentUnstable(): void
+    {
+        $this->downloader->addContent($this->resourcesDir.'artifacts-mixed-sorting', 'foobar');
+        $package = PackageMother::withOrganization('artifact', $this->resourcesDir.'artifacts-mixed-sorting', 'buddy');
+        $this->synchronizer->synchronize($package);
+
+        self::assertEquals('v1.0.0', $this->getProperty($package, 'latestReleasedVersion'));
+    }
+
     public function testSynchronizePackageThatAlreadyExists(): void
     {
         $path = $this->baseDir.'/buddy/p/buddy-works/alpha.json';
@@ -127,8 +136,10 @@ final class ComposerPackageSynchronizerTest extends TestCase
         $path = $this->baseDir.'/buddy/p/repman-io/repman.json';
         @unlink($path);
 
-        $this->synchronizer->synchronize(PackageMother::withOrganizationAndToken('gitlab', $this->resourcesDir.'artifacts', 'buddy'));
+        $package = PackageMother::withOrganizationAndToken('gitlab', $this->resourcesDir.'artifacts', 'buddy');
+        $this->synchronizer->synchronize($package);
 
+        self::assertTrue($package->isSynchronizedSuccessfully(), (string) $this->getProperty($package, 'lastSyncError'));
         self::assertFileExists($path);
 
         $json = unserialize((string) file_get_contents($path));
@@ -141,8 +152,10 @@ final class ComposerPackageSynchronizerTest extends TestCase
         $path = $this->baseDir.'/buddy/p/repman-io/repman.json';
         @unlink($path);
 
-        $this->synchronizer->synchronize(PackageMother::withOrganizationAndToken('github', $this->resourcesDir.'artifacts', 'buddy'));
+        $package = PackageMother::withOrganizationAndToken('github', $this->resourcesDir.'artifacts', 'buddy');
+        $this->synchronizer->synchronize($package);
 
+        self::assertTrue($package->isSynchronizedSuccessfully(), (string) $this->getProperty($package, 'lastSyncError'));
         self::assertFileExists($path);
 
         $json = unserialize((string) file_get_contents($path));
@@ -155,8 +168,10 @@ final class ComposerPackageSynchronizerTest extends TestCase
         $path = $this->baseDir.'/buddy/p/repman-io/repman.json';
         @unlink($path);
 
-        $this->synchronizer->synchronize(PackageMother::withOrganizationAndToken('bitbucket', $this->resourcesDir.'artifacts', 'buddy'));
+        $package = PackageMother::withOrganizationAndToken('bitbucket', $this->resourcesDir.'artifacts', 'buddy');
+        $this->synchronizer->synchronize($package);
 
+        self::assertTrue($package->isSynchronizedSuccessfully(), (string) $this->getProperty($package, 'lastSyncError'));
         self::assertFileExists($path);
 
         $json = unserialize((string) file_get_contents($path));
